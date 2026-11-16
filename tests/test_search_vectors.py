@@ -430,7 +430,7 @@ def test_cli_fetch_model_dispatch(trace_home, monkeypatch):
 
 def test_encode_cwd():
     assert memfiles.encode_cwd(r"E:\ai-guardian-star") == "E--ai-guardian-star"
-    assert memfiles.encode_cwd(r"D:\16228\桌面 x") == "D--16228----x"
+    assert memfiles.encode_cwd(r"D:\user\桌面 x") == "D--user----x"
 
 
 def test_resolve_project_prefers_sessions_then_fallback(conn):
