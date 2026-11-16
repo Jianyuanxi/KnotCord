@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 import queue
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -62,6 +63,8 @@ def lease_holder_pid(home: Path) -> int | None:
             return None
         try:
             info = lease.holder_info(conn)
+        except sqlite3.OperationalError:  # 库文件刚建出来、表还没建完：当作还没人持有
+            return None
         finally:
             conn.close()
     finally:
