@@ -82,9 +82,23 @@ def _in_tx(conn: sqlite3.Connection):
         yield
 
 
+VEC_GEN_KEY = "vec:gen"  # 向量被删或补进"旧位置"的计数；检索进程的内存矩阵靠它知道要整体重读
+
+
+def bump_vec_gen(conn: sqlite3.Connection) -> None:
+    conn.execute("INSERT INTO kv(key, value) VALUES(?, '1') "
+                 "ON CONFLICT(key) DO UPDATE SET value=CAST(value AS INTEGER)+1", (VEC_GEN_KEY,))
+
+
+def _drop_vec(conn: sqlite3.Connection, doc_id: int) -> None:
+    # 文本变了或文档没了，旧向量作废；worker 会按"缺向量"重新补
+    if conn.execute("DELETE FROM docs_vec WHERE doc_id=?", (doc_id,)).rowcount:
+        bump_vec_gen(conn)
+
+
 def index_doc(conn: sqlite3.Connection, src: str, src_id: int, project: str, ts: int,
               text: str, *, active: bool = True) -> int:
-    """upsert docs 行并重写 docs_fts（删旧插新同一事务），返回 doc_id。"""
+    """upsert docs 行并重写 docs_fts（删旧插新同一事务），返回 doc_id。文本重新索引会让旧向量作废。"""
     seg = segment(text)
     with _in_tx(conn):
         rows = conn.execute(
@@ -96,6 +110,7 @@ def index_doc(conn: sqlite3.Connection, src: str, src_id: int, project: str, ts:
         doc_id = rows[0][0]
         conn.execute("DELETE FROM docs_fts WHERE rowid=?", (doc_id,))
         conn.execute("INSERT INTO docs_fts(rowid, seg) VALUES(?, ?)", (doc_id, seg))
+        _drop_vec(conn, doc_id)
     return doc_id
 
 
@@ -106,7 +121,7 @@ def remove_doc(conn: sqlite3.Connection, src: str, src_id: int) -> None:
             return
         doc_id = row[0]
         conn.execute("DELETE FROM docs_fts WHERE rowid=?", (doc_id,))
-        conn.execute("DELETE FROM docs_vec WHERE doc_id=?", (doc_id,))
+        _drop_vec(conn, doc_id)
         conn.execute("DELETE FROM docs WHERE id=?", (doc_id,))
 
 

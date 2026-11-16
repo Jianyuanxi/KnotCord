@@ -162,9 +162,12 @@ def cmd_doctor(args) -> int:
         _out("")
         _out("[索引]")
         n_docs = conn.execute("SELECT count(*) FROM docs WHERE active=1").fetchone()[0]
-        n_miss = conn.execute("SELECT count(*) FROM docs d LEFT JOIN docs_vec v ON v.doc_id=d.id "
-                              "WHERE d.active=1 AND v.doc_id IS NULL").fetchone()[0]
-        _out(f"  可检索文档 {n_docs} 条，其中缺向量 {n_miss} 条")
+        from knotcord.search import embed as _embed
+        n_miss = conn.execute("SELECT count(*) FROM docs d WHERE d.active=1 AND NOT EXISTS "
+                              "(SELECT 1 FROM docs_vec v WHERE v.doc_id=d.id AND v.model=?)",
+                              (_embed.MODEL_ID,)).fetchone()[0]
+        _out(f"  可检索文档 {n_docs} 条，其中缺向量 {n_miss} 条"
+             f"（向量模型{'已就绪' if _embed.model_present() else '未下载，boot.py fetch-model 可下载'}）")
         for key, label in (("janitor:last", "上次清理"), ("janitor:weekly", "上次每周清理")):
             v = db.kv_get(conn, key)
             _out(f"  {label}: {_fmt_ts(v) if v else '从未'}")
@@ -216,6 +219,13 @@ def cmd_reindex(args) -> int:
         conn.close()
     _out(f"内置记忆文件索引已更新 {n} 个")
     return 0
+
+
+def cmd_fetch_model(args) -> int:
+    """下载向量检索用的嵌入模型到 ~/.knotcord/models（幂等；已就绪只校验）。"""
+    from knotcord.search import embed
+    _out(f"嵌入模型 {embed.MODEL_ID} -> {embed.model_dir()}")
+    return embed.fetch_model(_out)
 
 
 _PROJECT_TABLES = ("sessions", "events", "notes", "state_cards", "mem_flags", "summaries")
@@ -285,6 +295,8 @@ def hooks_json(python: str) -> dict:
         "description": "KnotCord 记忆插件：开局注入、收尾、增量入库。所有 hook 只写日志，永远 exit 0。",
         "hooks": {
             "SessionStart": [{"matcher": "startup|clear|compact", "hooks": [_hook_cmd(python, "session-start")]}],
+            # 提问前召回：默认关（recall.enabled），关着时 hook 只读配置就退出；timeout 比 SessionStart 更紧
+            "UserPromptSubmit": [{"hooks": [_hook_cmd(python, "prompt", timeout=3)]}],
             "Stop": [{"hooks": [_hook_ingest(True)]}],
             "PreCompact": [{"hooks": [_hook_ingest(False)]}],
             "SessionEnd": [{"hooks": [_hook_cmd(python, "session-end")]}],
@@ -305,6 +317,33 @@ def render(obj: dict) -> str:
 def generated_files(python: str, root: Path = ROOT) -> dict[Path, str]:
     return {root / "hooks" / "hooks.json": render(hooks_json(python)),
             root / MCP_FILE: render(mcp_json(python))}
+
+
+def codex_steps(python: str) -> list[str]:
+    """Codex 客户端的接入步骤（只打印，不改 ~/.codex）。采集不用配：server 里的 worker 会自己扫 Codex 会话目录。"""
+    boot = ROOT / "knotcord" / "boot.py"
+    entry = ROOT / "knotcord" / "hooks" / "entry.py"
+    q = json.dumps  # TOML 基本字符串和 JSON 字符串的转义规则一致（反斜杠写成 \\）
+    cmd = f'"{python}" -I -S -X utf8 "{entry}" session-start'
+    hooks = {"hooks": {"SessionStart": [{"matcher": "startup|clear", "hooks": [
+        {"type": "command", "command": cmd, "commandWindows": cmd, "timeout": 5}]}]}}
+    return [
+        "",
+        "Codex CLI / Desktop 作为第二个客户端（可选；共用同一个库，会话记录由 server 里的 worker 定期扫描采集）:",
+        "  A. 检索 + 采集：在 ~/.codex/config.toml 末尾加下面这段（或在终端跑 codex mcp add，效果相同），"
+        "重开 Codex 生效。Codex 拉起这个 server 时它同时做采集和提炼:",
+        "     [mcp_servers.knotcord]",
+        f"     command = {q(python)}",
+        f"     args = [\"-I\", \"-X\", \"utf8\", {q(str(boot))}, \"serve\"]",
+        f"     env = {{ KNOTCORD_HOME = {q(str(paths.home()))} }}",
+        "     startup_timeout_sec = 30",
+        "  B. 开局注入近况（可选）：把下面的 SessionStart 条目并进 ~/.codex/hooks.json 的 hooks 里"
+        "（别整份覆盖，里面已有别的工具的条目），然后在 Codex 里 /hooks 点信任；hook 命令一改就要重新信任:",
+        *("     " + ln for ln in json.dumps(hooks, indent=2, ensure_ascii=False).splitlines()),
+        "  C. 不接 B 也行：让 agent 开头调一次 knotcord 的 search（query 写项目名）。",
+        f"  扫描设置（config.toml 的 [codex]）: enabled、scan_s、lookback_days（默认只看最近 "
+        f"{config.DEFAULTS['codex.lookback_days']} 天内改过的会话）、sessions_dir",
+    ]
 
 
 def cmd_install(args) -> int:
@@ -329,6 +368,8 @@ def cmd_install(args) -> int:
     _out("  4. 迁移旧数据（和 claude-mem 并行跑一周对比，不停用它）: "
          f"\"{python}\" -I -X utf8 \"{ROOT}\\knotcord\\boot.py\" migrate")
     _out("  5. 确认没问题再按 Claude Code 的插件安装流程注册；回退见 uninstall")
+    for ln in codex_steps(python):
+        _out(ln)
     return 0
 
 
@@ -367,6 +408,7 @@ def build_parser() -> argparse.ArgumentParser:
     r = sub.add_parser("reindex", help="重建内置记忆文件索引")
     r.add_argument("--memroot", help="默认 ~/.claude/projects（只读）")
     r.set_defaults(fn=cmd_reindex)
+    sub.add_parser("fetch-model", help="下载向量检索用的嵌入模型（幂等）").set_defaults(fn=cmd_fetch_model)
     rp = sub.add_parser("rename-project", help="项目文件夹改名后把旧名下的记录并到新名")
     rp.add_argument("old")
     rp.add_argument("new")

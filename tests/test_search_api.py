@@ -124,6 +124,17 @@ def test_use_count_boosts_ranking(conn):
     assert conn.execute("SELECT use_count FROM notes WHERE id=?", (a,)).fetchone()[0] == 0
 
 
+def test_stale_note_demoted(conn):
+    import time
+    now = int(time.time())
+    fresh = add_note(conn, "路由规则", "一些别的说明文字，凑长度用的内容", ts=now)
+    stale = add_note(conn, "路由规则 路由规则", "路由规则", ts=T0)  # 关键词更密，但一年没人提也没人取
+    assert api.search(conn, "路由规则").splitlines()[0].startswith(f"n{fresh} ")
+    # 对照：同一条旧笔记最近被提及过，就不降权，按关键词它排前面
+    conn.execute("UPDATE notes SET last_mentioned=? WHERE id=?", (now, stale))
+    assert api.search(conn, "路由规则").splitlines()[0].startswith(f"n{stale} ")
+
+
 def test_vector_hook_rrf(conn, monkeypatch):
     a = add_note(conn, "完全无关的标题", "x", ts=T0 - 100)
     b = add_note(conn, "路由规则", "y", ts=T0)

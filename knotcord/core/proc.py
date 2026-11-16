@@ -202,7 +202,7 @@ def run_child(args: list[str], *, stdin_text: str | None, cwd: str, env: dict, t
                     except OSError:
                         pass
 
-            threading.Thread(target=_feed, daemon=True, name="trace-child-stdin").start()
+            threading.Thread(target=_feed, daemon=True, name="knotcord-child-stdin").start()
 
         deadline = time.monotonic() + timeout_s
         last_tick = time.monotonic()
@@ -320,7 +320,7 @@ def watch_parent(on_dead: Callable[[], None]) -> None:
     h = _k32.OpenProcess(_SYNCHRONIZE | _PROCESS_QUERY_LIMITED_INFORMATION, False, ppid)
     if not h:
         if ctypes.get_last_error() == _ERROR_INVALID_PARAMETER:  # 父进程早已不存在
-            threading.Thread(target=_fire, daemon=True, name="trace-watch-parent").start()
+            threading.Thread(target=_fire, daemon=True, name="knotcord-watch-parent").start()
         return
     # pid 可能被复用：真父进程一定比我早创建
     pc, mine = _creation_time(h), _creation_time(_k32.GetCurrentProcess())
@@ -334,4 +334,4 @@ def watch_parent(on_dead: Callable[[], None]) -> None:
             _k32.CloseHandle(h)
         _fire()
 
-    threading.Thread(target=_run, daemon=True, name="trace-watch-parent").start()
+    threading.Thread(target=_run, daemon=True, name="knotcord-watch-parent").start()

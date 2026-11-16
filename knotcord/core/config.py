@@ -52,11 +52,39 @@ DEFAULTS: dict[str, Any] = {
     "search.project_boost": 1.2,
     "search.vector": True,
     "search.unload_minutes": 30,
+    "search.vector_min": 0.5,  # 向量一路的最低余弦相似度，低于它不进融合；0 = 不设。实测（3.7 万条库）：乱码/无关查询 top5 在 0.45~0.49，相关查询 top5 在 0.52~0.67
+    "embed.batch": 8,  # 补向量：每批嵌几条（实测 8 比 32 省 100 MB 内存、速度不降）
+    "embed.round_docs": 256,  # 补向量：worker 每一轮最多嵌几条（嵌完一轮回去处理队列再接着嵌）
+    "embed.max_tokens": 256,  # 每条文本最多取前多少个 token（模型上限 512）
+    "embed.threads": 4,  # onnxruntime 线程数
     "retain.log_days": 14,
     "retain.log_mb": 50,
     "retain.event_body_days": 180,
     "janitor.hours": 6,
+    "worker.start_delay_s": 60,
     "recall.enabled": False,
+    "codex.enabled": True,          # 扫描 Codex 会话目录；目录不存在时什么都不做
+    "codex.scan_s": 60,             # 扫描间隔（秒）；多个 server 之间靠 kv 抢，同一间隔内只有一个真扫
+    "codex.lookback_days": 2,       # 只看最近这么多天内改过的 .jsonl；调大会把更早的会话也补进来并触发提炼
+    "codex.sessions_dir": "",       # 空 = $CODEX_HOME/sessions，再退回 ~/.codex/sessions
+    "recall.budget_tokens": 400,
+    "recall.max_items": 5,
+    "recall.min_chars": 12,
+    "recall.min_score": 7.5,    # 在真实库副本上标定：纯汉字提示里"相关"和"凑巧"的笔记都在 6～7 分，7.5 才稳
+    "recall.min_coverage": 0.2,
+    "recall.cross_project": False,
+    "recall.timeout_ms": 600,
+    "recall.query_chars": 300,
+    "consolidate.enabled": True,
+    "consolidate.include_legacy": False,
+    "consolidate.title_similarity": 0.9,
+    "consolidate.body_similarity": 0.8,
+    "consolidate.title_min_chars": 8,
+    "consolidate.stale_days": 90,
+    "consolidate.stale_factor": 0.8,
+    "consolidate.promote_min_uses": 5,
+    "consolidate.promote_max": 5,
+    "consolidate.promote_cooldown_days": 30,
     "filters.skip_tools": _SKIP_TOOLS,
     "filters.skip_name_contains": _SKIP_NAME_CONTAINS,
     "filters.skip_cmd_prefixes": _SKIP_CMD_PREFIXES,

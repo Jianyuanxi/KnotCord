@@ -185,13 +185,14 @@ def test_committed_manifests_match_generator():
 
 def test_manifest_paths_exist_and_hooks_follow_template():
     hooks = json.loads((ROOT / "hooks" / "hooks.json").read_text(encoding="utf-8"))["hooks"]
-    assert set(hooks) == {"SessionStart", "Stop", "PreCompact", "SessionEnd"}
-    for ev in ("SessionStart", "SessionEnd"):
+    assert set(hooks) == {"SessionStart", "UserPromptSubmit", "Stop", "PreCompact", "SessionEnd"}
+    for ev in ("SessionStart", "UserPromptSubmit", "SessionEnd"):
         h = hooks[ev][0]["hooks"][0]
         assert h["type"] == "command" and h["timeout"] <= 5
         assert h["args"][:4] == ["-I", "-S", "-X", "utf8"]  # 细则 6.3：只用标准库，不加载 site
         script = h["args"][4].replace("${CLAUDE_PLUGIN_ROOT}", str(ROOT))
         assert Path(script).is_file()
+    assert hooks["UserPromptSubmit"][0]["hooks"][0]["args"][-1] == "prompt"
     for ev in ("Stop", "PreCompact"):
         h = hooks[ev][0]["hooks"][0]
         assert h["type"] == "mcp_tool" and h["server"] == "plugin:knotcord:knotcord" and h["tool"] == "ingest"

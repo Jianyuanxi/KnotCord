@@ -2,7 +2,7 @@
 
 每次都做：扫临时目录（6 小时以上）、轮转日志（14 天 / 50 MB）、截断 WAL、PRAGMA optimize、清死进程的登记行。
 每周一次：quick_check、备份（只留最新一份）、FTS optimize、incremental_vacuum、
-events 旧工具正文清空（180 天）、内置记忆文件重建索引。
+events 旧工具正文清空（180 天）、内置记忆文件重建索引、笔记整理（consolidate：去重合并、晋升提名）。
 上次运行时间记在 kv：janitor:last、janitor:weekly；不到间隔就跳过。
 """
 
@@ -245,5 +245,11 @@ def _weekly(conn, cfg, now: float, memroot: str | None) -> dict:
     res["event_bodies_cleared"] = clear_old_event_bodies(conn, now, int(cfg.get("retain.event_body_days")))
     from knotcord.search import memfiles
     res["memfiles_updated"] = memfiles.reindex(conn, root=memroot)
+    try:  # 备份之后再整理；整理出错不拖累每周项的收尾
+        from knotcord import consolidate
+        res["consolidate"] = consolidate.run(conn, cfg, now)
+    except Exception as e:
+        _log.warning("每周整理失败: %s: %s", type(e).__name__, e)
+        res["consolidate_error"] = str(e)[:100]
     db.kv_set(conn, KEY_WEEKLY, int(now))
     return res

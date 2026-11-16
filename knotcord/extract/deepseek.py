@@ -158,7 +158,7 @@ def call(prompt: str, cfg, *, tmp_dir: str, on_tick=None, stop_event=None) -> Mo
         except BaseException as e:  # 线程里的异常带回主线程
             holder["err"] = e
 
-    t = threading.Thread(target=_work, daemon=True, name="trace-deepseek")
+    t = threading.Thread(target=_work, daemon=True, name="knotcord-deepseek")
     t.start()
     deadline = time.monotonic() + timeout_s
     last_tick = time.monotonic()

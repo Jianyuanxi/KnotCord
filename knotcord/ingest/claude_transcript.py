@@ -314,7 +314,8 @@ def _read_transcript(conn, sid: str, path: str, size: int, row, project, cwd, cl
             block, buf = buf[:cut + 1], buf[cut + 1:]
             parsed = _parse_block(block, None if lines is None else lines + 1, cfg)
             if state_project is None and (cwd or parsed.cwd):
-                state_project = _project.project_key(cwd or parsed.cwd)
+                # env={}：worker/drain 会替别的会话入库，不能用本进程的 CLAUDE_PROJECT_DIR 给它们定项目名
+                state_project = _project.project_key(cwd or parsed.cwd, env={})
             new_pos = pos + len(block)
             if not k:  # 文件开头指纹：下次读之前用它确认文件没被换掉
                 k = min(HEAD_BYTES, new_pos)
@@ -374,7 +375,7 @@ def ingest_session(conn, session_id: str, transcript_path: str, *, cwd: str | No
     row = conn.execute("SELECT * FROM sessions WHERE id=?", (session_id,)).fetchone()
     project = row["project"] if row is not None and row["project"] else None
     if project is None and cwd:
-        project = _project.project_key(cwd)
+        project = _project.project_key(cwd, env={})
     total = 0
     st = None
     if path:

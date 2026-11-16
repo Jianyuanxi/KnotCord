@@ -29,7 +29,7 @@ _WAKE = object()
 class Worker(threading.Thread):
     def __init__(self, stop_event: threading.Event, cfg=None, *, start_delay_s: float | None = None,
                  parent_pid: int | None = None) -> None:
-        super().__init__(name="trace-worker", daemon=True)
+        super().__init__(name="knotcord-worker", daemon=True)
         self.stop_event = stop_event
         self.cfg = cfg or config.load()
         self.start_delay_s = float(self.cfg.get("worker.start_delay_s", DEFAULT_START_DELAY_S)
@@ -80,6 +80,8 @@ class Worker(threading.Thread):
 
         t0 = time.monotonic()
         last_beat = last_pending = last_extract = last_jan = t0
+        codex_every = float(cfg.get("codex.scan_s", 60))
+        last_codex = t0 - codex_every  # 启动后第一轮就扫一次
         backfilled = False
         ended: set[str] = set()
         fails = 0
@@ -105,6 +107,9 @@ class Worker(threading.Thread):
                     _, e = work.process_pending(conn)
                     ended |= e
                     last_pending = now
+                if now - last_codex >= codex_every:  # Codex 没有每轮 hook：定期扫它的会话目录（目录不存在时零开销）
+                    last_codex = now
+                    did = work.scan_codex(conn, cfg) > 0 or did
                 if now - last_beat >= hb:
                     last_beat = now
                     self._heartbeat(conn)
@@ -120,6 +125,9 @@ class Worker(threading.Thread):
                         last_jan = now
                         if janitor.due(conn, cfg):
                             janitor.run(conn, cfg)
+                    if now - t0 >= self.start_delay_s:
+                        # 补向量：每轮限量、批间看 stop_event；嵌完一轮回到上面处理队列，不堵入库
+                        work.embed_pass(conn, cfg, self.lease, stop)
                 fails = 0
             except Exception as e:
                 fails += 1
@@ -137,8 +145,13 @@ class Worker(threading.Thread):
             if not self.lease.renew():
                 self.holding = False
                 _log.warning("续租失败，租约已被别人接手")
-        elif backlog.unbatched_stats(conn) or janitor.due(conn, self.cfg):
+        elif backlog.unbatched_stats(conn) or janitor.due(conn, self.cfg) or work.embed_due(conn, self.cfg):
             self.holding = self.lease.try_acquire()
+        try:
+            from knotcord.search import vectors  # 已在内存里的才有东西可放，没加载过这里只是一次 import
+            vectors.maybe_unload(float(self.cfg.get("search.unload_minutes", 30)))
+        except Exception:
+            pass
         if self.parent_pid and not procs.pid_alive(self.parent_pid):
             _log.warning("父进程 %s 已不在", self.parent_pid)
             if self.on_parent_gone:

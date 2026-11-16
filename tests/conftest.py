@@ -15,6 +15,8 @@ def trace_home(tmp_path, monkeypatch):
     home = tmp_path / "trace_home"
     monkeypatch.setenv("KNOTCORD_HOME", str(home))
     monkeypatch.delenv("KNOTCORD_INTERNAL", raising=False)
+    # worker 会扫 Codex 会话目录：指到不存在的临时位置，测试里不读真实的 ~/.codex
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex_home"))
     return home
 
 

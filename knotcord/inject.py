@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import sqlite3
 import time
 
 from knotcord.core import config as _config
@@ -26,6 +27,9 @@ _REQUEST_MAX = 50
 _DONE_MAX = 60
 _KEY_DAYS = 7
 _TAIL_CHARS = 80
+PROMOTE_PREFIX = "promote:"  # kv 键 promote:<项目>，由 consolidate.nominate 写
+_PROMOTE_SHOW = 3
+_PROMOTE_TITLE = 40
 _SENT_END = re.compile(r"[。！？!?；;\n]|\.(?=\s|$)")
 
 
@@ -234,17 +238,51 @@ def _tail_block(conn, project: str, exclude_session: str | None, cfg, now: float
     return "## 未提炼\n" + line + "\n"
 
 
+def _corrupt_line(conn) -> str:
+    """细则 5.3：quick_check 没过时 janitor 在 kv 的 db_corrupt 里写了说明，注入第一行就写出来。不受预算约束。"""
+    try:
+        msg = _db.kv_get(conn, "db_corrupt", "") or ""
+    except sqlite3.Error:
+        return ""
+    msg = msg.split("（quick_check")[0].strip()
+    return f"! {_one(msg)}\n" if msg else ""
+
+
+def _promote_block(conn, project: str) -> str:
+    """每周整理（consolidate.nominate）按项目存的晋升提名：一行提示，列前 3 条。"""
+    try:
+        raw = _db.kv_get(conn, PROMOTE_PREFIX + project, "") or ""
+        items = json.loads(raw) if raw else []
+    except (sqlite3.Error, ValueError):
+        return ""
+    if not isinstance(items, list) or not items:
+        return ""
+    names = []
+    for it in items[:_PROMOTE_SHOW]:
+        if isinstance(it, dict):
+            names.append(f"n{it.get('id')} {_one(it.get('title'))[:_PROMOTE_TITLE]}")
+    if not names:
+        return ""
+    return f"有 {len(items)} 条笔记被反复取用，可考虑写进记忆文件：{'；'.join(names)}\n"
+
+
 def read_for_hook(conn, project: str, *, exclude_session: str | None = None) -> str:
-    """读 kv 里拼好的文本，再补第 7 项。无内容返回空串。conn 可以是只读连接。"""
+    """读 kv 里拼好的文本，再补：库损坏提示（第一行，不占预算）、第 7 项、晋升提名行（后两项受预算约束）。
+    无内容返回空串。conn 可以是只读连接。"""
     cfg = _config.load()
     text = _db.kv_get(conn, f"inject:{project}", "") or ""
     now = time.time()
-    tail = _tail_block(conn, project, exclude_session, cfg, now)
-    if not tail:
+    corrupt = _corrupt_line(conn)
+    optional = [b for b in (_tail_block(conn, project, exclude_session, cfg, now), _promote_block(conn, project)) if b]
+    if not corrupt and not optional:
         return text
-    if text.endswith(_CLOSE):
-        base = text[:-len(_CLOSE)]
-    else:
-        base = _head(project, now)
-    cand = base + tail + _CLOSE
-    return cand if _fits(cand, cfg) else text
+    base = text[:-len(_CLOSE)] if text.endswith(_CLOSE) else _head(project, now)
+    if corrupt:  # 插在开头标签行之后、抬头之前：整段注入的第一行内容
+        first, _, rest = base.partition("\n")
+        base = first + "\n" + corrupt + rest
+    cur, changed = base, bool(corrupt)
+    for blk in optional:
+        if _fits(cur + blk + _CLOSE, cfg):
+            cur += blk
+            changed = True
+    return (cur + _CLOSE) if changed else text

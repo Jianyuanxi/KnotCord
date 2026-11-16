@@ -21,6 +21,25 @@
         ]
       }
     ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "D:\\Anaconda\\python.exe",
+            "args": [
+              "-I",
+              "-S",
+              "-X",
+              "utf8",
+              "${CLAUDE_PLUGIN_ROOT}/knotcord/hooks/entry.py",
+              "prompt"
+            ],
+            "timeout": 3
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "hooks": [

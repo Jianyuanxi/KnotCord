@@ -1,6 +1,6 @@
 """hook 统一入口（细则 6.3 的六条模板）。
 
-用法：python -I -S -X utf8 <插件根>\\knotcord\\hooks\\entry.py <session-start|session-end|stop|pre-compact>
+用法：python -I -S -X utf8 <插件根>\\knotcord\\hooks\\entry.py <session-start|prompt|session-end|stop|pre-compact>
 stdin 是 Claude Code 给的 JSON。任何情况下都 exit 0；只许 import 标准库和 knotcord.core / knotcord.inject。
 """
 
@@ -62,6 +62,19 @@ def _session_start(data: dict) -> None:
         sys.stdout.flush()
 
 
+def _prompt(data: dict) -> None:
+    """UserPromptSubmit：提问前自动召回。默认关闭——关着时只读配置文件就退出，不 import sqlite3、不连库。"""
+    from knotcord.core import config
+    cfg = config.load()
+    if not cfg.get("recall.enabled", False):
+        return
+    from knotcord import recall
+    text = recall.run(data, cfg)
+    if text:
+        sys.stdout.write(text + "\n")
+        sys.stdout.flush()
+
+
 def _enqueue(data: dict, reason: str, *, keep_last_msg: bool = False) -> None:
     from knotcord.core import db
     sid = data.get("session_id")
@@ -107,6 +120,13 @@ def _session_end(data: dict) -> None:
         _enqueue(data, "end")
     except Exception:
         _log_error("session-end 写 pending 失败")
+    try:  # 召回的会话内去重状态文件：会话结束就删（没开召回时文件不存在，unlink 失败即忽略）
+        sid = data.get("session_id")
+        if isinstance(sid, str) and sid:
+            from knotcord import recall
+            recall.forget(sid)
+    except Exception:
+        _log_error("session-end 清理召回状态失败")
     from knotcord.core import proc
     proc.spawn_detached(_drain_cmd())  # 拉起后不等待；失败由外层记日志
 
@@ -121,6 +141,7 @@ def _pre_compact(data: dict) -> None:
 
 _EVENTS = {
     "session-start": _session_start,
+    "prompt": _prompt,
     "session-end": _session_end,
     "stop": _stop,
     "pre-compact": _pre_compact,

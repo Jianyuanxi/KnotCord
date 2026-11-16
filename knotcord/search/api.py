@@ -54,9 +54,12 @@ def _parse_id(s: str):
     return (m.group(1), int(m.group(2))) if m else None
 
 
-def _vector_candidates(conn, query: str, *, project, limit, include_superseded) -> list[tuple[int, float]]:
-    """向量一路的接入点，返回 (doc_id, 分数)，按相关度从高到低。本轮未实现，返回空。"""
-    return []
+def _vector_candidates(conn, query: str, *, project, limit, include_superseded,
+                       cfg=None) -> list[tuple[int, float]]:
+    """向量一路，返回 (doc_id, 余弦相似度)，从高到低。模型不在、依赖缺失、没有向量或任何出错都返回空。"""
+    from knotcord.search import vectors  # 延迟：numpy、onnxruntime 只在这里才会被带进来
+    return vectors.candidates(conn, query, project=project, limit=limit, include_superseded=include_superseded,
+                              cfg=cfg)
 
 
 # ---------------------------------------------------------------- search
@@ -141,7 +144,7 @@ def search(conn, query: str, *, project: str | None = None, current_project: str
 
     if cfg.get("search.vector", True):
         vec = _vector_candidates(conn, query, project=project, limit=cand * over,
-                                 include_superseded=include_superseded)
+                                 include_superseded=include_superseded, cfg=cfg)
         for rank, (doc_id, _s) in enumerate(vec, 1):
             scores[doc_id] = scores.get(doc_id, 0.0) + 1.0 / (k + rank)
 
@@ -157,6 +160,13 @@ def search(conn, query: str, *, project: str | None = None, current_project: str
                     continue
                 meta[r["id"]] = (r["src"], r["src_id"], r["project"], r["ts"])
 
+    stale: dict[int, float] = {}  # 笔记 id -> 久未取用的降权乘数（只含被降权的）
+    if cfg.get("consolidate.enabled", True):
+        note_ids = [meta[d][1] for d in scores if d in meta and meta[d][0] == "note"]
+        if note_ids:
+            from knotcord import consolidate
+            stale = consolidate.note_factors(conn, note_ids, cfg=cfg)
+
     items: list[tuple] = []  # (score, ts, src, src_id, project, ts)
     for doc_id, sc in scores.items():
         if doc_id not in meta:
@@ -166,6 +176,8 @@ def search(conn, query: str, *, project: str | None = None, current_project: str
             sc *= boost
         if use.get(doc_id, 0) > 0:
             sc *= 1.05
+        if src == "note":
+            sc *= stale.get(sid, 1.0)
         items.append((sc, ts or 0, src, sid, proj, ts))
 
     if not items and len(query) == 1 and _HAN_RE.match(query):
