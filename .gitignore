@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+*.egg-info/
+
+# 私人资料：调研、方案、项目说明，只留本地
+docs/
+reports/
+research_notes/
+CLAUDE.md
+CLAUDE.local.md

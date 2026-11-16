@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "knotcord": {
+      "type": "stdio",
+      "command": "D:\\Anaconda\\python.exe",
+      "args": [
+        "-I",
+        "-X",
+        "utf8",
+        "${CLAUDE_PLUGIN_ROOT}/knotcord/boot.py",
+        "serve"
+      ]
+    }
+  }
+}

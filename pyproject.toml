@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "knotcord"
+version = "0.1.0"
+description = "KnotCord: Claude Code 记忆插件（自用）"
+requires-python = ">=3.13"
+# core / hooks 只许标准库；下面这些只在 server、search 等上层用，且在函数里延迟 import
+dependencies = [
+    "mcp",
+    "numpy",
+    "onnxruntime",
+    "tokenizers",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[tool.setuptools.packages.find]
+include = ["knotcord*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

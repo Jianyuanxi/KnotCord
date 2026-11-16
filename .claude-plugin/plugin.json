@@ -1,0 +1,9 @@
+{
+  "name": "knotcord",
+  "version": "0.1.0",
+  "description": "KnotCord（迹）：给 Claude Code 用的本地记忆插件。记录发生过什么，开局注入近况，按需检索旧信息。",
+  "author": {
+    "name": "Jianyuanxi"
+  },
+  "keywords": ["memory"]
+}

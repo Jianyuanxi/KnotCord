@@ -1,0 +1,64 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["skip", "observations", "summary", "state_card", "memory_conflicts", "unfinished_new", "unfinished_resolved"],
+  "properties": {
+    "skip": {"type": "boolean"},
+    "observations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["type", "title", "body", "facts", "files", "tags", "slot", "supersedes", "source"],
+        "properties": {
+          "type": {"type": "string", "enum": ["bugfix", "feature", "refactor", "change", "discovery", "decision"]},
+          "title": {"type": "string"},
+          "body": {"type": "string"},
+          "facts": {"type": "array", "items": {"type": "string"}},
+          "files": {"type": "array", "items": {"type": "string"}},
+          "tags": {"type": "array", "items": {"type": "string", "enum": ["gotcha", "how-it-works", "problem-solution", "pattern", "trade-off"]}},
+          "slot": {"type": "string"},
+          "supersedes": {"type": "array", "items": {"type": "integer"}},
+          "source": {"type": "array", "items": {"type": "integer"}}
+        }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["request", "completed", "learned", "next_steps"],
+      "properties": {
+        "request": {"type": "string"},
+        "completed": {"type": "string"},
+        "learned": {"type": "string"},
+        "next_steps": {"type": "string"}
+      }
+    },
+    "state_card": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["goal", "status", "decisions", "pitfalls", "next"],
+      "properties": {
+        "goal": {"type": "string"},
+        "status": {"type": "string"},
+        "decisions": {"type": "array", "items": {"type": "string"}},
+        "pitfalls": {"type": "array", "items": {"type": "string"}},
+        "next": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "memory_conflicts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["file", "why"],
+        "properties": {
+          "file": {"type": "string"},
+          "why": {"type": "string"}
+        }
+      }
+    },
+    "unfinished_new": {"type": "array", "items": {"type": "string"}},
+    "unfinished_resolved": {"type": "array", "items": {"type": "integer"}}
+  }
+}
