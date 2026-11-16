@@ -19,7 +19,7 @@ from knotcord.core import tokens as _tokens
 
 _log_ = _log.get_logger("inject")
 
-HEADER = "翻旧账：内置记忆 → trace search/timeline/get → ~/.claude/projects/**/*.jsonl"
+HEADER = "翻旧账：内置记忆 → knotcord search/timeline/get → ~/.claude/projects/**/*.jsonl"
 _CLOSE = "</knotcord-context>"
 _KEY_POINTS_MAX = 8
 _REQUEST_MAX = 50

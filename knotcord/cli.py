@@ -2,7 +2,7 @@
 
 usage / doctor / migrate / reindex / drain / serve / install / uninstall。
 install、uninstall 默认只打印步骤和将要生成的内容（--dry-run），--apply 才把插件根下的
-hooks/hooks.json 和 .mcp.json 重新生成；绝不动 ~/.claude，也不注册插件（那一步要用户在 Claude Code 里做）。
+hooks/hooks.json 和 mcp.json 重新生成；绝不动 ~/.claude，也不注册插件（那一步要用户在 Claude Code 里做）。
 """
 
 from __future__ import annotations
@@ -218,6 +218,36 @@ def cmd_reindex(args) -> int:
     return 0
 
 
+_PROJECT_TABLES = ("sessions", "events", "notes", "state_cards", "mem_flags", "summaries")
+
+
+def rename_project(conn, old: str, new: str) -> dict[str, int]:
+    """项目文件夹改名后把旧项目名的记录并到新名下。内置记忆文件（memfiles 及其 docs）按目录算项目，不动。"""
+    from knotcord import inject
+    counts: dict[str, int] = {}
+    with db.write_tx(conn):
+        for t in _PROJECT_TABLES:
+            counts[t] = conn.execute(f"UPDATE {t} SET project=? WHERE project=?", (new, old)).rowcount
+        counts["docs"] = conn.execute("UPDATE docs SET project=? WHERE project=? AND src!='memfile'",
+                                      (new, old)).rowcount
+        conn.execute("DELETE FROM kv WHERE key=?", (f"inject:{old}",))
+    inject.render(conn, new)
+    return counts
+
+
+def cmd_rename_project(args) -> int:
+    if args.old == args.new:
+        _out("新旧项目名相同")
+        return 1
+    conn = db.connect()
+    try:
+        counts = rename_project(conn, args.old, args.new)
+    finally:
+        conn.close()
+    _out(f"{args.old} → {args.new}: " + "，".join(f"{k} {v}" for k, v in counts.items()))
+    return 0
+
+
 def cmd_drain(args) -> int:
     from knotcord import drain
     return drain.main()
@@ -231,6 +261,9 @@ def cmd_serve(args) -> int:
 # ---------------------------------------------------------------- install / uninstall
 
 HOOK_STDLIB_ARGS = ["-I", "-S", "-X", "utf8"]
+# 不叫 .mcp.json：在本仓库里开会话时 Claude Code 会把根目录的 .mcp.json 当项目级 server 再加载一遍，
+# 那里没有 ${CLAUDE_PLUGIN_ROOT}，必然启动失败。plugin.json 的 mcpServers 指向这个文件。
+MCP_FILE = "mcp.json"
 SERVER_NAME = "plugin:knotcord:knotcord"
 
 
@@ -271,7 +304,7 @@ def render(obj: dict) -> str:
 
 def generated_files(python: str, root: Path = ROOT) -> dict[Path, str]:
     return {root / "hooks" / "hooks.json": render(hooks_json(python)),
-            root / ".mcp.json": render(mcp_json(python))}
+            root / MCP_FILE: render(mcp_json(python))}
 
 
 def cmd_install(args) -> int:
@@ -334,8 +367,12 @@ def build_parser() -> argparse.ArgumentParser:
     r = sub.add_parser("reindex", help="重建内置记忆文件索引")
     r.add_argument("--memroot", help="默认 ~/.claude/projects（只读）")
     r.set_defaults(fn=cmd_reindex)
+    rp = sub.add_parser("rename-project", help="项目文件夹改名后把旧名下的记录并到新名")
+    rp.add_argument("old")
+    rp.add_argument("new")
+    rp.set_defaults(fn=cmd_rename_project)
     sub.add_parser("drain", help="一次性收尾（SessionEnd hook 拉起）").set_defaults(fn=cmd_drain)
-    sub.add_parser("serve", help="启动 stdio MCP server（.mcp.json 用）").set_defaults(fn=cmd_serve)
+    sub.add_parser("serve", help=f"启动 stdio MCP server（{MCP_FILE} 用）").set_defaults(fn=cmd_serve)
     for name, fn, text in (("install", cmd_install, "生成 hook 和 MCP 配置、打印安装步骤"),
                            ("uninstall", cmd_uninstall, "打印卸载步骤和 ~/.knotcord 各项大小")):
         p = sub.add_parser(name, help=text)

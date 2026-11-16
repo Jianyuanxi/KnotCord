@@ -358,6 +358,16 @@ def test_deepseek_stop_event_aborts(server):
         deepseek.call("x", dscfg(s, extract__timeout_s=30), tmp_dir="unused", stop_event=ev)
 
 
+def test_deepseek_key_added_after_start_is_picked_up(trace_home, monkeypatch):
+    """server 启动时读的 cfg 没有密钥，之后才写 config.toml：不用重启就能用上。"""
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    stale = mkcfg()
+    assert deepseek._api_key(stale) == ""
+    trace_home.mkdir(parents=True, exist_ok=True)
+    (trace_home / "config.toml").write_text(f'[extract]\ndeepseek_api_key = "{FAKE_KEY}"\n', encoding="utf-8")
+    assert deepseek._api_key(stale) == FAKE_KEY
+
+
 def test_deepseek_network_error_does_not_leak_key():
     cfg = mkcfg(extract__deepseek_base_url="http://127.0.0.1:1/v1", extract__deepseek_api_key=FAKE_KEY)
     with pytest.raises(ModelError) as ei:

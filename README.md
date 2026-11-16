@@ -29,12 +29,12 @@ knotcord/
   drain.py   会话关闭后的收尾进程
   janitor.py 临时文件、日志、备份的清理
   cli.py     usage / doctor / migrate / reindex / install
-hooks/hooks.json  .mcp.json  .claude-plugin/  skills/
+hooks/hooks.json  mcp.json  .claude-plugin/  skills/
 ```
 
 ## 安装
 
-`hooks/hooks.json` 和 `.mcp.json` 里的解释器要写绝对路径（hook 不依赖 PATH）。克隆后先按自己的环境重写：
+`hooks/hooks.json` 和 `mcp.json` 里的解释器要写绝对路径（hook 不依赖 PATH）。克隆后先按自己的环境重写：
 
 ```
 python -I -X utf8 knotcord\boot.py install --apply --python <你的 python.exe 绝对路径>

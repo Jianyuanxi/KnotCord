@@ -54,7 +54,11 @@ def cost_cny(prompt_tokens: int, hit_tokens: int, out_tokens: int, when: datetim
 
 
 def _api_key(cfg) -> str:
-    return (os.environ.get("DEEPSEEK_API_KEY") or cfg.get("extract.deepseek_api_key") or "").strip()
+    key = (os.environ.get("DEEPSEEK_API_KEY") or cfg.get("extract.deepseek_api_key") or "").strip()
+    if not key:  # server 启动时读的配置可能还没有密钥：重读一次，配上密钥不用等下个会话
+        from knotcord.core import config as _config
+        key = (_config.load().get("extract.deepseek_api_key") or "").strip()
+    return key
 
 
 def _system_text() -> str:

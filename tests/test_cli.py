@@ -135,13 +135,13 @@ def snapshot(d: Path) -> dict:
 
 
 def test_install_default_is_dry_run_and_writes_nothing(trace_home, capsys):
-    before = snapshot(ROOT / "hooks"), (ROOT / ".mcp.json").stat().st_mtime_ns
+    before = snapshot(ROOT / "hooks"), (ROOT / "mcp.json").stat().st_mtime_ns
     rc, out = run_cli("install", capsys=capsys)
     assert rc == 0 and "预演" in out and "claude plugin validate" in out and "--plugin-dir" in out
     assert "将生成" in out and "写入 " not in out
     rc, out = run_cli("install", "--dry-run", capsys=capsys)
     assert "预演" in out
-    assert (snapshot(ROOT / "hooks"), (ROOT / ".mcp.json").stat().st_mtime_ns) == before
+    assert (snapshot(ROOT / "hooks"), (ROOT / "mcp.json").stat().st_mtime_ns) == before
     assert not trace_home.exists() or not any(trace_home.iterdir())  # ~/.knotcord 也没被碰
 
 
@@ -153,8 +153,8 @@ def test_install_apply_writes_only_target_files(trace_home, tmp_path, monkeypatc
     rc, out = run_cli("install", "--apply", "--python", r"X:\py\python.exe", capsys=capsys)
     assert rc == 0 and "【执行】" in out
     written = sorted(str(p.relative_to(plugin)) for p in plugin.rglob("*") if p.is_file())
-    assert written == [".mcp.json", "hooks\\hooks.json"] or written == [".mcp.json", "hooks/hooks.json"]
-    assert json.loads((plugin / ".mcp.json").read_text(encoding="utf-8"))["mcpServers"]["knotcord"]["command"] == r"X:\py\python.exe"
+    assert sorted(written) == sorted(["mcp.json", str(Path("hooks") / "hooks.json")])
+    assert json.loads((plugin / "mcp.json").read_text(encoding="utf-8"))["mcpServers"]["knotcord"]["command"] == r"X:\py\python.exe"
     assert not trace_home.exists() or not any(trace_home.iterdir())  # 除目标文件外什么都没写
     rc, out = run_cli("install", "--apply", "--python", r"X:\py\python.exe", capsys=capsys)  # 再来一次：内容无变化
     assert "内容无变化" in out
@@ -172,7 +172,7 @@ def test_uninstall_lists_sizes_and_deletes_nothing(trace_home, capsys):
 # ---------------------------------------------------------------- 提交进仓库的清单
 
 def _committed():
-    mcp = json.loads((ROOT / ".mcp.json").read_text(encoding="utf-8"))
+    mcp = json.loads((ROOT / "mcp.json").read_text(encoding="utf-8"))
     return mcp, mcp["mcpServers"]["knotcord"]["command"]
 
 
@@ -205,6 +205,26 @@ def test_manifest_paths_exist_and_hooks_follow_template():
     assert Path(args[3].replace("${CLAUDE_PLUGIN_ROOT}", str(ROOT))).is_file()
     plugin = json.loads((ROOT / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
     assert plugin["name"] == "knotcord" and re.fullmatch(r"\d+\.\d+\.\d+", plugin["version"])
+    # 不能用根目录 .mcp.json：在本仓库里开会话会被当成项目级 server 重复加载并启动失败
+    assert plugin["mcpServers"] == "./" + cli.MCP_FILE and not (ROOT / ".mcp.json").exists()
+
+
+def test_rename_project_moves_rows_and_rerenders(trace_home, conn, capsys):
+    now = int(time.time())
+    conn.execute("INSERT INTO sessions(id, project, last_seen) VALUES('s1', 'Old', ?)", (now,))
+    conn.execute("INSERT INTO events(session_id, project, ts, uuid, kind, body) VALUES('s1', 'Old', ?, 'u1', 'prompt', '旧提示')",
+                 (now,))
+    conn.execute("INSERT INTO summaries(session_id, project, ts, request, completed) VALUES('s1', 'Old', ?, '做 A', '做完 A')",
+                 (now,))
+    conn.execute("INSERT INTO docs(src, src_id, project) VALUES('summary', 1, 'Old')")
+    conn.execute("INSERT INTO docs(src, src_id, project) VALUES('memfile', 1, 'Old')")
+    conn.execute("INSERT INTO kv(key, value) VALUES('inject:Old', 'x')")
+    conn.commit()
+    counts = cli.rename_project(conn, "Old", "New")
+    assert counts["sessions"] == 1 and counts["events"] == 1 and counts["summaries"] == 1 and counts["docs"] == 1
+    assert conn.execute("SELECT count(*) FROM docs WHERE src='memfile' AND project='Old'").fetchone()[0] == 1
+    assert db.kv_get(conn, "inject:Old", None) is None
+    assert "做 A" in db.kv_get(conn, "inject:New", "")
 
 
 def test_skill_frontmatter_and_content():
