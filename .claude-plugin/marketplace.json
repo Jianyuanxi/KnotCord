@@ -1,0 +1,19 @@
+{
+  "name": "knotcord",
+  "owner": {
+    "name": "Jianyuanxi"
+  },
+  "metadata": {
+    "description": "KnotCord（结绳）：给 Claude Code 用的本地记忆插件",
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "knotcord",
+      "source": "./",
+      "description": "记录发生过什么，开局注入近况，按需检索旧信息。记录不调模型，成批提炼。",
+      "category": "memory",
+      "tags": ["memory"]
+    }
+  ]
+}
