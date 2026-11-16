@@ -266,14 +266,27 @@ def _promote_block(conn, project: str) -> str:
     return f"有 {len(items)} 条笔记被反复取用，可考虑写进记忆文件：{'；'.join(names)}\n"
 
 
+def _related_block(conn, project: str, cfg) -> str:
+    """项目地图（projmap）里本项目的相关项目：一行。没算过、关着、没有相关项目都不输出。"""
+    if not cfg.get("projmap.enabled", True):
+        return ""
+    from knotcord import projmap
+    items = projmap.related(conn, project)
+    parts = [f"{_one(it['project'])}（{_one(it.get('why'))}）" if it.get("why") else _one(it["project"])
+             for it in items]
+    return ("相关项目：" + "、".join(parts) + "\n") if parts else ""
+
+
 def read_for_hook(conn, project: str, *, exclude_session: str | None = None) -> str:
-    """读 kv 里拼好的文本，再补：库损坏提示（第一行，不占预算）、第 7 项、晋升提名行（后两项受预算约束）。
+    """读 kv 里拼好的文本，再补：库损坏提示（第一行，不占预算）、第 7 项、相关项目行、晋升提名行（后三项受预算约束）。
     无内容返回空串。conn 可以是只读连接。"""
     cfg = _config.load()
     text = _db.kv_get(conn, f"inject:{project}", "") or ""
     now = time.time()
     corrupt = _corrupt_line(conn)
-    optional = [b for b in (_tail_block(conn, project, exclude_session, cfg, now), _promote_block(conn, project)) if b]
+    optional = [b for b in (_tail_block(conn, project, exclude_session, cfg, now),
+                            _related_block(conn, project, cfg),
+                            _promote_block(conn, project)) if b]
     if not corrupt and not optional:
         return text
     base = text[:-len(_CLOSE)] if text.endswith(_CLOSE) else _head(project, now)

@@ -27,6 +27,18 @@ _SKIP_CMD_PREFIXES = [
     "Get-ChildItem", "Get-Content", "Test-Path",
 ]
 
+# 项目地图里不参与的项目名（不分大小写，* 通配）；纯数字、长度小于 3 的另有规则，不用列
+_PROJMAP_EXCLUDE = [
+    # 通用目录名、系统目录名（会话在这些目录里开，项目名取成了目录名）
+    "desktop", "date", "win", "app", "scripts", "temp", "tmp", "cache", "local", "roaming", "appdata", "memory",
+    "program files*", "system32", "windows", "users", "documents", "downloads", "download", "src", "docs", "test",
+    "tests", "bin", "lib", "build", "dist", "ppt", "workspace",
+    # 临时会话、点开头的配置目录、路径编码出来的名字（D--xxx-desktop-----）
+    "new-chat*", "scratch*", "scratchpad", "emptydir", ".*", "*--*", "新建*", "未命名*", "untitled*",
+    # 课程里的泛称、Codex 自动起的目录名
+    "实验*", "作业*", "files-mentioned*",
+]
+
 DEFAULTS: dict[str, Any] = {
     "inject.budget_tokens": 2000,
     "inject.hard_chars": 9000,
@@ -85,6 +97,12 @@ DEFAULTS: dict[str, Any] = {
     "consolidate.promote_min_uses": 5,
     "consolidate.promote_max": 5,
     "consolidate.promote_cooldown_days": 30,
+    "search.related_boost": 1.1,  # 相关项目（projmap）的条目加分，必须小于 search.project_boost，search() 里会截到不超过它
+    "projmap.enabled": True,
+    "projmap.max": 3,             # 每个项目最多记几个相关项目
+    "projmap.min_score": 25.0,    # 真实库副本上标定：25 分以下基本是一方的普通词撞上了另一个项目名（22 分的几对都不可信）
+    "projmap.exclude": _PROJMAP_EXCLUDE,
+    "corrections.similarity": 0.7,  # 纠错标题归"同类"的相似度，比去重的 0.9 宽：同一个错换个说法也算；库里还没有 correction 笔记，未在真实数据上标定
     "filters.skip_tools": _SKIP_TOOLS,
     "filters.skip_name_contains": _SKIP_NAME_CONTAINS,
     "filters.skip_cmd_prefixes": _SKIP_CMD_PREFIXES,

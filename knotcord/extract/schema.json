@@ -16,7 +16,7 @@
           "body": {"type": "string"},
           "facts": {"type": "array", "items": {"type": "string"}},
           "files": {"type": "array", "items": {"type": "string"}},
-          "tags": {"type": "array", "items": {"type": "string", "enum": ["gotcha", "how-it-works", "problem-solution", "pattern", "trade-off"]}},
+          "tags": {"type": "array", "items": {"type": "string", "enum": ["gotcha", "how-it-works", "problem-solution", "pattern", "trade-off", "correction"]}},
           "slot": {"type": "string"},
           "supersedes": {"type": "array", "items": {"type": "integer"}},
           "source": {"type": "array", "items": {"type": "integer"}}

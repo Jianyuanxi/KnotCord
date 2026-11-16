@@ -19,6 +19,9 @@ KILL_AFTER_S = 1.0          # 模板第 3 条：1 秒自杀定时器
 DB_BUSY_MS = 400            # 写 pending 时撞锁最多等这么久；SessionStart 是 300
 LAST_MSG_MAX = 20_000       # kv 里存的 last_assistant_message 上限
 
+# 调用方：argv 里带 --codex 就是 Codex 的 hook（字段名和 Claude Code 一致，差别只有下面几处）
+_CLIENT = "claude"
+
 
 def _log_error(what: str) -> None:
     try:
@@ -47,7 +50,8 @@ def _session_start(data: dict) -> None:
         return
     from knotcord.core import db, project
     sid = data.get("session_id")
-    proj = project.project_key(data.get("cwd") or "")
+    # Codex：env={} 防止从 Claude Code 终端里启动时带进 CLAUDE_PROJECT_DIR；入库那边也是 env={}，两边才对得上
+    proj = project.project_key(data.get("cwd") or "", env={} if _CLIENT == "codex" else None)
     try:
         conn = db.connect(readonly=True, busy_timeout_ms=300)
     except FileNotFoundError:
@@ -58,7 +62,14 @@ def _session_start(data: dict) -> None:
     finally:
         conn.close()
     if text:
-        sys.stdout.write(text + "\n")
+        if _CLIENT == "codex":
+            # Codex 在 Windows 里经 PowerShell 转发 hook 输出，会按系统代码页（GBK）重编码，中文会坏；
+            # 输出 ASCII 的 JSON（\uXXXX 转义）就不受影响。additionalContext 会作为开发者上下文注入
+            import json
+            sys.stdout.write(json.dumps({"hookSpecificOutput": {
+                "hookEventName": "SessionStart", "additionalContext": text}}, ensure_ascii=True) + "\n")
+        else:
+            sys.stdout.write(text + "\n")
         sys.stdout.flush()
 
 
@@ -89,7 +100,7 @@ def _enqueue(data: dict, reason: str, *, keep_last_msg: bool = False) -> None:
         with db.write_tx(conn, retry=False):
             conn.execute(
                 "INSERT INTO pending(session_id, client, transcript_path, reason, enqueued_at) VALUES(?,?,?,?,?)",
-                (sid, "claude", path if isinstance(path, str) else None, reason, int(time.time())))
+                (sid, _CLIENT, path if isinstance(path, str) else None, reason, int(time.time())))
             msg = data.get("last_assistant_message")
             if keep_last_msg and isinstance(msg, str) and msg.strip():
                 from knotcord.core.redact import redact
@@ -162,6 +173,8 @@ def main(argv=None) -> int:
         except Exception:
             pass
         argv = sys.argv[1:] if argv is None else argv
+        global _CLIENT
+        _CLIENT = "codex" if "--codex" in argv[1:] else "claude"
         handler = _EVENTS.get(argv[0]) if argv else None
         if handler is None:
             return 0

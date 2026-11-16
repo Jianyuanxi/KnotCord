@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from knotcord.core import tokens
 
 TYPES = ("bugfix", "feature", "refactor", "change", "discovery", "decision")
-TAGS = ("gotcha", "how-it-works", "problem-solution", "pattern", "trade-off")
+TAGS = ("gotcha", "how-it-works", "problem-solution", "pattern", "trade-off", "correction")  # correction：用户纠正，见 corrections.py
 
 # 上限比提示里要求的（标题 40、正文 300）略宽，只拦明显失控的输出
 TITLE_MAX = 60

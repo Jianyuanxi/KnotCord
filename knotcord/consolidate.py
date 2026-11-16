@@ -100,6 +100,17 @@ class _Bodies:
         return self.cache[nid]
 
 
+def titles_similar(na: str, nb: str, thr: float) -> bool:
+    """两个已经 _norm 过的标题是否相似：长度相近、数字串完全一致（版本号、端口、IP 不同就是不同的事实）、
+    difflib 比值 >= thr。去重和 corrections 归类共用。"""
+    if abs(len(na) - len(nb)) > max(len(na), len(nb)) * (1 - thr) + 1:
+        return False
+    if _DIGITS.findall(na) != _DIGITS.findall(nb):
+        return False
+    sm = difflib.SequenceMatcher(None, na, nb, autojunk=False)
+    return not (sm.real_quick_ratio() < thr or sm.quick_ratio() < thr or sm.ratio() < thr)
+
+
 def _title_pairs(conn, rows, cfg) -> dict[int, set[int]]:
     """标题相似的候选对 -> 邻接表（双向）。"""
     thr = float(cfg.get("consolidate.title_similarity", 0.9))
@@ -120,12 +131,7 @@ def _title_pairs(conn, rows, cfg) -> dict[int, set[int]]:
         if key in seen_pairs:
             return
         seen_pairs.add(key)
-        if abs(len(na) - len(nb)) > max(len(na), len(nb)) * (1 - thr) + 1:
-            return
-        if _DIGITS.findall(na) != _DIGITS.findall(nb):  # 版本号、端口、IP 不同就是不同的事实
-            return
-        sm = difflib.SequenceMatcher(None, na, nb, autojunk=False)
-        if sm.real_quick_ratio() < thr or sm.quick_ratio() < thr or sm.ratio() < thr:
+        if not titles_similar(na, nb, thr):
             return
         ba, bb = bodies.get(ra["id"]), bodies.get(rb["id"])
         if (ba or bb) and difflib.SequenceMatcher(None, ba, bb, autojunk=False).ratio() < body_thr:

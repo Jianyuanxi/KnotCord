@@ -3,6 +3,8 @@
 usage / doctor / migrate / reindex / drain / serve / install / uninstall。
 install、uninstall 默认只打印步骤和将要生成的内容（--dry-run），--apply 才把插件根下的
 hooks/hooks.json 和 mcp.json 重新生成；绝不动 ~/.claude，也不注册插件（那一步要用户在 Claude Code 里做）。
+install --codex [--apply | --remove] 单独处理 Codex：只增改/撤销 ~/.codex 下 config.toml 和 hooks.json 里 knotcord 自己的部分
+（先备份成 .bak-knotcord），见 codex_setup。
 """
 
 from __future__ import annotations
@@ -258,6 +260,44 @@ def cmd_rename_project(args) -> int:
     return 0
 
 
+def cmd_projmap(args) -> int:
+    """立即重算项目地图（写 kv）并打印；--project 只打印那一个项目的。"""
+    from knotcord import projmap
+    cfg = config.load()
+    if not cfg.get("projmap.enabled", True):
+        _out("项目地图已关闭（projmap.enabled = false）")
+        return 0
+    conn = db.connect()
+    try:
+        res = projmap.build(conn, cfg)
+    finally:
+        conn.close()
+    items = {args.project: res.get(args.project, [])} if args.project else res
+    shown = {p: v for p, v in items.items() if v}
+    if not shown:
+        _out("无")
+        return 0
+    _out(f"{len(res)} 个项目有相关项目（min_score {cfg.get('projmap.min_score')}，每项目最多 {cfg.get('projmap.max')} 个）")
+    for p in sorted(shown):
+        _out(f"{p}: " + "；".join(f"{x['project']} {x['score']}（{x['why']}）" for x in shown[p]))
+    return 0
+
+
+def cmd_corrections(args) -> int:
+    """纠错统计：tags 带 correction 的笔记，按项目分组、标题相近的归类。"""
+    from knotcord import corrections
+    try:
+        conn = db.connect(readonly=True)
+    except FileNotFoundError:
+        _out("无")
+        return 0
+    try:
+        _out(corrections.render(conn, days=args.days, project=args.project))
+    finally:
+        conn.close()
+    return 0
+
+
 def cmd_drain(args) -> int:
     from knotcord import drain
     return drain.main()
@@ -320,24 +360,20 @@ def generated_files(python: str, root: Path = ROOT) -> dict[Path, str]:
 
 
 def codex_steps(python: str) -> list[str]:
-    """Codex 客户端的接入步骤（只打印，不改 ~/.codex）。采集不用配：server 里的 worker 会自己扫 Codex 会话目录。"""
-    boot = ROOT / "knotcord" / "boot.py"
-    entry = ROOT / "knotcord" / "hooks" / "entry.py"
-    q = json.dumps  # TOML 基本字符串和 JSON 字符串的转义规则一致（反斜杠写成 \\）
-    cmd = f'"{python}" -I -S -X utf8 "{entry}" session-start'
-    hooks = {"hooks": {"SessionStart": [{"matcher": "startup|clear", "hooks": [
-        {"type": "command", "command": cmd, "commandWindows": cmd, "timeout": 5}]}]}}
+    """Codex 客户端的接入步骤（只打印，不改 ~/.codex）。采集不用配：server 里的 worker 会自己扫 Codex 会话目录。
+    一步到位用 install --codex --apply（见 codex_setup）；这里列的是等价的手工写法。"""
+    from knotcord import codex_setup
+    block = codex_setup.mcp_block(python, ROOT, paths.home())
+    hooks = {"hooks": codex_setup.hook_groups(python, ROOT)}
     return [
         "",
         "Codex CLI / Desktop 作为第二个客户端（可选；共用同一个库，会话记录由 server 里的 worker 定期扫描采集）:",
+        "  一步到位：boot.py install --codex --apply（改 ~/.codex 下的 config.toml 和 hooks.json，先备份，"
+        "--remove 撤销，不加 --apply 只预演）。下面是等价的手工写法:",
         "  A. 检索 + 采集：在 ~/.codex/config.toml 末尾加下面这段（或在终端跑 codex mcp add，效果相同），"
         "重开 Codex 生效。Codex 拉起这个 server 时它同时做采集和提炼:",
-        "     [mcp_servers.knotcord]",
-        f"     command = {q(python)}",
-        f"     args = [\"-I\", \"-X\", \"utf8\", {q(str(boot))}, \"serve\"]",
-        f"     env = {{ KNOTCORD_HOME = {q(str(paths.home()))} }}",
-        "     startup_timeout_sec = 30",
-        "  B. 开局注入近况（可选）：把下面的 SessionStart 条目并进 ~/.codex/hooks.json 的 hooks 里"
+        *("     " + ln for ln in block.splitlines()),
+        "  B. 开局注入近况和会话结束收尾（可选）：把下面的条目并进 ~/.codex/hooks.json 的 hooks 里"
         "（别整份覆盖，里面已有别的工具的条目），然后在 Codex 里 /hooks 点信任；hook 命令一改就要重新信任:",
         *("     " + ln for ln in json.dumps(hooks, indent=2, ensure_ascii=False).splitlines()),
         "  C. 不接 B 也行：让 agent 开头调一次 knotcord 的 search（query 写项目名）。",
@@ -348,6 +384,13 @@ def codex_steps(python: str) -> list[str]:
 
 def cmd_install(args) -> int:
     python = args.python or _interpreter()
+    if getattr(args, "remove", False) and not getattr(args, "codex", False):
+        _out("--remove 要和 --codex 一起用")
+        return 1
+    if getattr(args, "codex", False):  # 只处理 Codex 那边（~/.codex 的 config.toml 和 hooks.json），不生成插件文件
+        from knotcord import codex_setup
+        return codex_setup.run(python, apply=bool(args.apply) and not args.dry_run,
+                               remove=bool(args.remove), out=_out)
     files = generated_files(python)
     apply = bool(args.apply) and not args.dry_run
     _out(("【执行】" if apply else "【预演，不写任何文件；加 --apply 才会写】") + f" 解释器: {python}")
@@ -413,6 +456,13 @@ def build_parser() -> argparse.ArgumentParser:
     rp.add_argument("old")
     rp.add_argument("new")
     rp.set_defaults(fn=cmd_rename_project)
+    pm = sub.add_parser("projmap", help="立即重算项目地图（项目之间的联系）并打印")
+    pm.add_argument("--project", help="只打印这个项目的相关项目")
+    pm.set_defaults(fn=cmd_projmap)
+    co = sub.add_parser("corrections", help="纠错统计：用户纠正过什么、同类错几次")
+    co.add_argument("--days", type=int, default=7, help="看最近几天，默认 7；0 = 不限")
+    co.add_argument("--project", help="只看这个项目")
+    co.set_defaults(fn=cmd_corrections)
     sub.add_parser("drain", help="一次性收尾（SessionEnd hook 拉起）").set_defaults(fn=cmd_drain)
     sub.add_parser("serve", help=f"启动 stdio MCP server（{MCP_FILE} 用）").set_defaults(fn=cmd_serve)
     for name, fn, text in (("install", cmd_install, "生成 hook 和 MCP 配置、打印安装步骤"),
@@ -420,9 +470,13 @@ def build_parser() -> argparse.ArgumentParser:
         p = sub.add_parser(name, help=text)
         g = p.add_mutually_exclusive_group()
         g.add_argument("--dry-run", action="store_true", help="只打印（默认）")
-        g.add_argument("--apply", action="store_true", help="真的写文件（仅 install，仅插件根下两个文件）")
+        g.add_argument("--apply", action="store_true",
+                       help="真的写文件（仅 install；不带 --codex 只写插件根下两个文件，带 --codex 只写 ~/.codex 下两个文件）")
         if name == "install":
             p.add_argument("--python", help="写进配置的解释器绝对路径，默认当前解释器本体")
+            p.add_argument("--codex", action="store_true",
+                           help="把 KnotCord 接进 Codex：登记 MCP server、挂 SessionStart/SessionEnd hook")
+            p.add_argument("--remove", action="store_true", help="和 --codex 一起用：撤销上面的接入")
         p.set_defaults(fn=fn)
     return ap
 

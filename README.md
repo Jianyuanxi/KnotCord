@@ -31,6 +31,7 @@ knotcord/
   drain.py   会话关闭后的收尾进程
   janitor.py 临时文件、日志、备份的清理
   cli.py     usage / doctor / migrate / reindex / install
+  codex_setup.py  把 KnotCord 接进 Codex（install --codex）：改 ~/.codex 的 config.toml 和 hooks.json
 hooks/hooks.json  mcp.json  .claude-plugin/  skills/
 ```
 
@@ -51,6 +52,23 @@ python -I -X utf8 knotcord\boot.py fetch-model
 ```
 
 下载约 24 MB 的 bge-small-zh-v1.5 int8 ONNX 模型到 `~/.knotcord/models/`（先试 huggingface.co，不通换 hf-mirror.com；大小和 sha256 都核对，重复运行不会重下）。`tokenizers` 可装进 `~/.knotcord/venv/Lib/site-packages`（`boot.py` 会把它和用户 site 都加进 `-I` 模式的路径）。之后持有租约的 worker 会在后台给文档补向量，每轮限量、可中断；`doctor` 的"缺向量 N 条"就是还没补的数量。
+
+### 接入 Codex（可选）
+
+Codex CLI 和 Codex 桌面版共用 `~/.codex`。接入后两个客户端写同一个库：同一个文件夹在两边是同一个项目名（取 `.git` 所在目录名，没有 `.git` 取当前目录名；路径的大小写、`\\?\` 前缀、`/mnt/c/` 写法先理平），各自能搜到对方的记录，`sessions.client` 区分来源（`claude` / `codex`）。
+
+```
+python -I -X utf8 knotcord\boot.py install --codex --python <你的 python.exe 绝对路径>            # 预演：只打印要改什么，不写文件
+python -I -X utf8 knotcord\boot.py install --codex --apply --python <你的 python.exe 绝对路径>   # 真的写
+python -I -X utf8 knotcord\boot.py install --codex --remove --apply                              # 撤销
+```
+
+它只改 `~/.codex`（或 `CODEX_HOME`）下两个文件里 KnotCord 自己的部分，别的内容和注释原样保留，改之前先把原文件备份成同目录的 `config.toml.bak-knotcord`、`hooks.json.bak-knotcord`（只留最新一份；内容没变不重备份）：
+
+- `config.toml`：末尾追加一段带 `# >>> knotcord` / `# <<< knotcord <<<` 标记的 `[mcp_servers.knotcord]`，Codex 里的 agent 能用 `search`、`timeline`、`get`（`ingest` 是给 Claude Code 的 hook 用的，已用 `disabled_tools` 隐藏）。重复运行不会产生第二段；已有手工登记的同名段会拒绝并提示先删掉。
+- `hooks.json`：并入 `SessionStart`（开局注入近况，`startup|clear|compact` 触发，`resume` 不注入）和 `SessionEnd`（会话结束时登记、拉起收尾进程）各一条。hook 用的是 `knotcord/hooks/entry.py ... --codex`，输出是纯 ASCII 的 JSON（Windows 里 Codex 经 PowerShell 转发 hook 输出，中文会被按 GBK 重编码，转义后不受影响）。
+
+装完在 Codex 里输入 `/hooks`，把两条 knotcord 的 hook 点“信任”——Codex 要求用户审核后 hook 才会运行，信任记录绑定 hook 内容的哈希，改过命令要重新点一次，这一步程序不代做。会话记录的采集不依赖 hook：MCP server 里的 worker 每 60 秒扫一次 `~/.codex/sessions`，hook 只管开局注入和结束收尾。
 
 提炼通道：默认 `codex exec`，不可用时走 DeepSeek，密钥从环境变量 `DEEPSEEK_API_KEY` 读，没有再读 `~/.knotcord/config.toml` 的 `extract.deepseek_api_key`。两个都没有时只记录不提炼。
 
@@ -75,4 +93,4 @@ python -m pytest tests -q
 
 ## 状态
 
-第一版。关键词检索、迁移、采集、提炼、注入已有测试覆盖；按意思搜（本地 bge-small-zh-v1.5 int8，向量放内存里直接做点积，和关键词结果用 RRF 合并）已做，模型文件和依赖缺失时自动退回纯关键词；Codex CLI 的会话记录已能采集（扫 `~/.codex/sessions`），在 Codex 里装 MCP 和 hook 的步骤由 `install --dry-run` 打印，尚未真机验证。
+第一版。关键词检索、迁移、采集、提炼、注入已有测试覆盖；按意思搜（本地 bge-small-zh-v1.5 int8，向量放内存里直接做点积，和关键词结果用 RRF 合并）已做，模型文件和依赖缺失时自动退回纯关键词；Codex 客户端已接通：会话记录能采集（扫 `~/.codex/sessions`），`install --codex` 能一步登记 MCP server 和 hook，已在本机用 `codex mcp list` 确认登记成功、手工拉起 server 完成握手和 `tools/list`；Codex 会话里的 hook 注入、会话结束收尾、MCP 工具调用还没在真实 Codex 会话里跑过（Codex 额度恢复后验证）。

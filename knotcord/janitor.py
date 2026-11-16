@@ -251,5 +251,11 @@ def _weekly(conn, cfg, now: float, memroot: str | None) -> dict:
     except Exception as e:
         _log.warning("每周整理失败: %s: %s", type(e).__name__, e)
         res["consolidate_error"] = str(e)[:100]
+    try:  # 项目地图：出错只记日志，不拖累上面的每周项和 KEY_WEEKLY 的记录
+        from knotcord import projmap
+        res["projmap"] = len(projmap.build(conn, cfg, now))
+    except Exception as e:
+        _log.warning("项目地图重算失败: %s: %s", type(e).__name__, e)
+        res["projmap_error"] = str(e)[:100]
     db.kv_set(conn, KEY_WEEKLY, int(now))
     return res

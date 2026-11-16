@@ -7,7 +7,8 @@
 observations：值得长期记住的事，每条一个对象。没有就给空数组。
 - type 只能用这六个英文值：bugfix（修了故障，写明原因）、feature（新增能力）、refactor（重构）、change（配置、版本、环境的改动）、discovery（查明了某个事实或机制）、decision（定了某个方案或约束）。不要用别的词，不要用中文。
 - title 不超过 40 字，说清"什么事"；body 不超过 300 字，写"为什么、结果、关键数据"。路径、版本号、端口、命令、报错原文原样保留，不要改写。
-- facts：可单独查验的短事实。files：涉及的文件路径。tags 只能从 gotcha、how-it-works、problem-solution、pattern、trade-off 里选，没有合适的就给空数组。
+- facts：可单独查验的短事实。files：涉及的文件路径。tags 只能从 gotcha、how-it-works、problem-solution、pattern、trade-off、correction 里选，没有合适的就给空数组。
+- correction：用户明确纠正了助手的做法、或指出助手做错时，另出一条笔记，tags 带 correction；title 写"错在哪 → 应该怎样"，body 写用户原话要点和正确做法。
 - slot：这条笔记描述的是某个"会变的单值事实"时才填，格式 对象.属性，例如 3x-ui.面板端口、vps1.公网IP、Span.当前版本；同一个 slot 的新笔记会自动取代旧的。不是单值事实就填空字符串。
 - supersedes：已有笔记编号列表里，被这条新笔记明确推翻的编号。判定标准：只有新事实明确使旧事实为假才算取代；进展和新活动不否定原有事实；不能只因为时间更近就判旧的失效。拿不准就不填。只能填已有笔记列表里出现过的编号。
 - source：这条笔记依据的操作记录序号（方括号里的数字）。

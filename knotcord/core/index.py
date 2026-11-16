@@ -165,6 +165,13 @@ def _run(conn: sqlite3.Connection, match: str, project, srcs, limit, active_only
         raise
 
 
+def phrase_match(text: str) -> str | None:
+    """text 作为整体的 FTS MATCH 表达式（各段短语 AND）；切不出可搜的词（只有单个汉字、全是符号）返回 None。
+    不放宽成 OR，给"这段文字是否出现"的精确计数用。"""
+    usable = [p for p in _parse(text or "") if not p.single]
+    return " AND ".join(_quote(p.tokens) for p in usable) if usable else None
+
+
 def fts_search(conn: sqlite3.Connection, query: str, *, project: str | None = None,
                srcs: tuple[str, ...] | None = None, limit: int = 50,
                active_only: bool = True) -> list[sqlite3.Row]:
