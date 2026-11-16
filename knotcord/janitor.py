@@ -1,6 +1,7 @@
 """清理任务（细则 5.3）。只有持有租约的进程调用（worker 启动 60 秒后、之后每 6 小时、drain 退出前）。
 
-每次都做：扫临时目录（6 小时以上）、轮转日志（14 天 / 50 MB）、截断 WAL、PRAGMA optimize、清死进程的登记行。
+每次都做：扫临时目录（6 小时以上）、轮转日志（14 天 / 50 MB）、截断 WAL、PRAGMA optimize、清死进程的登记行、
+项目地图过期检查（地图文件或项目说明文件改过就重建）。
 每周一次：quick_check、备份（只留最新一份）、FTS optimize、incremental_vacuum、
 events 旧工具正文清空（180 天）、内置记忆文件重建索引、笔记整理（consolidate：去重合并、晋升提名）。
 上次运行时间记在 kv：janitor:last、janitor:weekly；不到间隔就跳过。
@@ -211,6 +212,16 @@ def run(conn, cfg, *, now: float | None = None, force: bool = False, memroot: st
     res["procs_pruned"] = procs.prune_dead(conn)
     if force or weekly_due(conn, now):
         res.update(_weekly(conn, cfg, now, memroot))
+    if "projmap" not in res and "projmap_error" not in res and res.get("quick_check", "ok") == "ok" \
+            and "weekly_skipped" not in res:
+        try:  # 常规运行也看一眼：地图文件或项目说明文件改过就重建（只读几个小文件，很便宜）
+            from knotcord import projmap
+            n = projmap.refresh_if_stale(conn, cfg, now)
+            if n is not None:
+                res["projmap"] = n
+        except Exception as e:
+            _log.warning("项目地图按需重建失败: %s: %s", type(e).__name__, e)
+            res["projmap_error"] = str(e)[:100]
     res["wal_truncated"] = truncate_wal(conn)
     try:
         conn.execute("PRAGMA optimize")

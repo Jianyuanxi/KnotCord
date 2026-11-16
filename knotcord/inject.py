@@ -267,7 +267,7 @@ def _promote_block(conn, project: str) -> str:
 
 
 def _related_block(conn, project: str, cfg) -> str:
-    """项目地图（projmap）里本项目的相关项目：一行。没算过、关着、没有相关项目都不输出。"""
+    """项目地图（projmap）里本项目的相关项目：一行（只给 Codex 用）。没算过、关着、没有相关项目都不输出。"""
     if not cfg.get("projmap.enabled", True):
         return ""
     from knotcord import projmap
@@ -277,15 +277,16 @@ def _related_block(conn, project: str, cfg) -> str:
     return ("相关项目：" + "、".join(parts) + "\n") if parts else ""
 
 
-def read_for_hook(conn, project: str, *, exclude_session: str | None = None) -> str:
+def read_for_hook(conn, project: str, *, exclude_session: str | None = None, client: str = "claude") -> str:
     """读 kv 里拼好的文本，再补：库损坏提示（第一行，不占预算）、第 7 项、相关项目行、晋升提名行（后三项受预算约束）。
+    相关项目行只给 Codex（client="codex"）：Claude Code 本来就会加载项目的 CLAUDE.local.md，不重复输出。
     无内容返回空串。conn 可以是只读连接。"""
     cfg = _config.load()
     text = _db.kv_get(conn, f"inject:{project}", "") or ""
     now = time.time()
     corrupt = _corrupt_line(conn)
     optional = [b for b in (_tail_block(conn, project, exclude_session, cfg, now),
-                            _related_block(conn, project, cfg),
+                            _related_block(conn, project, cfg) if client == "codex" else "",
                             _promote_block(conn, project)) if b]
     if not corrupt and not optional:
         return text

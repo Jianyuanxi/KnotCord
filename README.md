@@ -72,6 +72,10 @@ python -I -X utf8 knotcord\boot.py install --codex --remove --apply             
 
 提炼通道：默认 `codex exec`，不可用时走 DeepSeek，密钥从环境变量 `DEEPSEEK_API_KEY` 读，没有再读 `~/.knotcord/config.toml` 的 `extract.deepseek_api_key`。两个都没有时只记录不提炼。
 
+## 项目地图
+
+项目之间的关系（同一套产品的电脑端和手机端、作业属于哪门课）只有用户自己知道，所以 KnotCord 不猜，只读用户手写的地图：`~/CLAUDE.md`（`projmap.map_file` 可改）里"名字 / 路径 / 是什么 / 关联"的表格，加各项目目录下 `CLAUDE.local.md`（没有就看 `CLAUDE.md`）的"## 相关项目"一节。声明过的关系用来给检索结果略微加分；Codex 的开局注入会列出相关项目（Claude Code 本来就读项目说明文件，不重复）。地图和说明文件都只读，改过之后清理任务会自动重建；`boot.py projmap` 立即重建，并另列"库里有记录但地图里没有的项目"和"跨项目改过文件的候选"供用户决定要不要补进地图。
+
 ## 命令
 
 ```
@@ -81,6 +85,7 @@ python -I -X utf8 knotcord\boot.py migrate   从 ~/.claude-mem 导入（只读�
 python -I -X utf8 knotcord\boot.py reindex   重建内置记忆文件索引
 python -I -X utf8 knotcord\boot.py fetch-model   下载向量检索用的嵌入模型（幂等）
 python -I -X utf8 knotcord\boot.py rename-project 旧名 新名   项目文件夹改名后合并旧记录
+python -I -X utf8 knotcord\boot.py projmap   立即重建项目地图并打印关系和候选
 ```
 
 ## 测试

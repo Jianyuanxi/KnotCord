@@ -167,10 +167,12 @@ def search(conn, query: str, *, project: str | None = None, current_project: str
             from knotcord import consolidate
             stale = consolidate.note_factors(conn, note_ids, cfg=cfg)
 
-    rel: set[str] = set()  # 项目地图里和本项目相关的项目：略微加分，加得比本项目少
+    rel: set[str] = set()   # 项目地图里本项目声明的相关项目：略微加分，加得比本项目少
+    same: set[str] = set()  # 地图里本项目的子目录项目（或本项目是它的子目录）：视同本项目
     if current_project and cfg.get("projmap.enabled", True):
         from knotcord import projmap
-        rel = {x["project"] for x in projmap.related(conn, current_project)}
+        for x in projmap.related(conn, current_project):  # 只看本项目自己的出边
+            (same if x.get("kind") == "subdir" else rel).add(x["project"])
     rel_boost = min(float(cfg.get("search.related_boost", 1.1)), boost)
 
     items: list[tuple] = []  # (score, ts, src, src_id, project, ts)
@@ -178,7 +180,7 @@ def search(conn, query: str, *, project: str | None = None, current_project: str
         if doc_id not in meta:
             continue
         src, sid, proj, ts = meta[doc_id]
-        if current_project and proj == current_project:
+        if current_project and (proj == current_project or proj in same):
             sc *= boost
         elif proj in rel:
             sc *= rel_boost

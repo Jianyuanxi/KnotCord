@@ -261,7 +261,8 @@ def cmd_rename_project(args) -> int:
 
 
 def cmd_projmap(args) -> int:
-    """立即重算项目地图（写 kv）并打印；--project 只打印那一个项目的。"""
+    """立即重建项目地图（写 kv）并打印三部分：地图里的关系、库里有但地图没有的项目、跨项目改文件的候选。
+    --project 只看那一个项目：第 1、3 部分只留以它为起点的，第 2 部分只留它自己。"""
     from knotcord import projmap
     cfg = config.load()
     if not cfg.get("projmap.enabled", True):
@@ -269,17 +270,41 @@ def cmd_projmap(args) -> int:
         return 0
     conn = db.connect()
     try:
-        res = projmap.build(conn, cfg)
+        an = projmap.analyze(conn, cfg)
+        projmap.build(conn, cfg, analysis=an)
+        rep = projmap.report(conn, cfg, an) if an.data.nodes else projmap.Report([], [])
     finally:
         conn.close()
-    items = {args.project: res.get(args.project, [])} if args.project else res
-    shown = {p: v for p, v in items.items() if v}
-    if not shown:
-        _out("无")
+    data, only = an.data, args.project
+    if not data.nodes:
+        _out(f"地图文件不存在或没有可解析的行：{data.map_file}（已清空旧的项目地图）")
+        for s in data.skipped:
+            _out("  跳过：" + s)
         return 0
-    _out(f"{len(res)} 个项目有相关项目（min_score {cfg.get('projmap.min_score')}，每项目最多 {cfg.get('projmap.max')} 个）")
-    for p in sorted(shown):
-        _out(f"{p}: " + "；".join(f"{x['project']} {x['score']}（{x['why']}）" for x in shown[p]))
+    _out(f"地图文件：{data.map_file}（{len(data.nodes)} 个项目，{len(data.edges)} 个声明了相关项目）")
+    for s in data.skipped:
+        _out("  跳过：" + s)
+    _out("")
+    _out("1. 地图里的关系")
+    lines = []
+    for a in sorted(an.result):
+        decl = [x for x in an.result[a] if x.get("kind") != "subdir"]
+        if decl and (not only or a == only):
+            lines.append(f"{a} → " + "；".join(f"{x['project']}（{x['why']}）" for x in decl))
+    for q in sorted(data.nodes):
+        subs = sorted(p for p, qs in an.merged.items() if q in qs)
+        if subs and (not only or only == q or only in subs):
+            lines.append(f"{q} ⇄ " + "、".join(subs) + "（子目录）")
+    _out("\n".join(lines) if lines else "无")
+    _out("")
+    _out(f"2. 库里有记录但地图里没有的项目（笔记数 ≥ {projmap.UNMAPPED_MIN_NOTES}）")
+    un = [(p, n) for p, n in rep.unmapped if not only or p == only]
+    _out("\n".join(f"{p}  {n} 条" for p, n in un) if un else "无")
+    _out("")
+    _out(f"3. 跨项目改文件的候选（改过 ≥ {projmap.CAND_MIN_FILES} 个不同文件、地图里没连；"
+         "仅供参考，要不要加进地图由你定）")
+    cd = [(a, b, n) for a, b, n in rep.candidates if not only or a == only]
+    _out("\n".join(f"{a} → {b} 改过 {n} 个文件" for a, b, n in cd) if cd else "无")
     return 0
 
 

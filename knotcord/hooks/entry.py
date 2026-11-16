@@ -58,7 +58,8 @@ def _session_start(data: dict) -> None:
         return  # 库还没建：没有记忆，什么都不注入
     try:
         from knotcord import inject
-        text = inject.read_for_hook(conn, proj, exclude_session=sid if isinstance(sid, str) else None)
+        text = inject.read_for_hook(conn, proj, exclude_session=sid if isinstance(sid, str) else None,
+                                    client=_CLIENT)
     finally:
         conn.close()
     if text:
