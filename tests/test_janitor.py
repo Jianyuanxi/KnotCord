@@ -161,6 +161,7 @@ def test_weekly_runs_all_items_once(trace_home, conn, cfg, tmp_path):
 
 
 def test_quick_check_failure_sets_corrupt_flag_and_skips(trace_home, conn, cfg, monkeypatch):
+    real_quick_check = janitor.quick_check
     monkeypatch.setattr(janitor, "quick_check", lambda c: "*** in database main *** Page 5: btreeInitPage() error")
     now = time.time()
     res = janitor.run(conn, cfg, now=now, memroot=str(trace_home / "nomem"))
@@ -169,8 +170,9 @@ def test_quick_check_failure_sets_corrupt_flag_and_skips(trace_home, conn, cfg, 
     assert "已停止记录" in db.kv_get(conn, janitor.KEY_CORRUPT)
     assert db.kv_get(conn, janitor.KEY_WEEKLY) is None  # 下次清理还会再查
     # 之后库恢复正常：标记被清掉
-    monkeypatch.undo()
-    res2 = janitor.run(conn, cfg, now=now + DAY, force=True, memroot=str(trace_home / "nomem"))
+    # 不能用 monkeypatch.undo()：它会连 KNOTCORD_HOME 一起撤掉，后面的清理和备份就写进真实的 ~/.knotcord
+    monkeypatch.setattr(janitor, "quick_check", real_quick_check)
+    res2 =janitor.run(conn, cfg, now=now + DAY, force=True, memroot=str(trace_home / "nomem"))
     assert res2["quick_check"] == "ok"
     assert db.kv_get(conn, janitor.KEY_CORRUPT) is None
 
