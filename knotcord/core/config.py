@@ -53,6 +53,7 @@ DEFAULTS: dict[str, Any] = {
     "extract.idle_minutes": 15,
     "extract.timeout_s": 120,
     "extract.retries": 3,
+    "extract.lean": True,  # 提炼前本地去噪（extract/lean.py），只影响喂给模型的文本
     "budget.daily_calls": 150,
     "budget.daily_cny": 3.0,
     "lease.ttl_s": 90,

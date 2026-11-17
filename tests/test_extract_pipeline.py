@@ -427,7 +427,7 @@ def test_both_channels_unavailable_stops_and_keeps_events(conn, lease, monkeypat
     add_events(conn, turns=8, text_len=50)
     install(monkeypatch,
             FakeChannel(ChannelUnavailable(None, "额度")),
-            FakeChannel(ChannelUnavailable(None, "没有配置密钥"), provider="deepseek"))
+            FakeChannel(ChannelUnavailable(None, "DeepSeek 限流"), provider="deepseek"))
     assert pipeline.run_session(conn, "s1", mkcfg(), lease) == 0
     assert conn.execute("SELECT count(*) FROM events WHERE batch_id IS NOT NULL").fetchone()[0] == 0
     assert conn.execute("SELECT count(*) FROM batches").fetchone()[0] == 0  # 没失败过，不留批行

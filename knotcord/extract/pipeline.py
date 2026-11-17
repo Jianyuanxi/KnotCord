@@ -94,14 +94,14 @@ def _session_project(conn, session_id: str) -> str:
     return (r["project"] if r else "") or ""
 
 
-def _cut(rows, max_chars: int) -> list:
+def _cut(rows, max_chars: int, lean_on: bool = False) -> list:
     """从游标里取一批：不超过 max_chars，超了就切在最近的回合边界（用户提示条）；
     一个回合就超长又没有边界可切时，在当前位置硬切。至少取一条。"""
     batch: list = []
     total = 0
     boundary: int | None = None
     for r in rows:
-        n = prompt.event_len(r)
+        n = prompt.event_len(r, lean_on)
         if batch and total + n > max_chars:
             # 当前这条本身就是用户提示 = 已经在回合边界上，直接切；否则退回到最近的回合边界
             if r["kind"] != "prompt" and boundary is not None:
@@ -125,6 +125,8 @@ def _claim(conn, session_id: str, chars_in: int, now: float) -> tuple[int, int]:
             for extra in rows[1:]:
                 conn.execute("UPDATE batches SET status='dead', error='重复的批行' WHERE id=?", (extra["id"],))
             attempts = (keep["attempts"] or 0) + (1 if keep["status"] == "running" else 0)
+            if keep["status"] == "running":
+                _log.warning("批 %s 上次停在调模型途中（进程被杀或崩溃），记一次失败后重试", keep["id"])
             conn.execute("UPDATE batches SET status='running', attempts=?, chars_in=? WHERE id=?",
                          (attempts, chars_in, keep["id"]))
             return keep["id"], attempts
@@ -143,6 +145,26 @@ def _release(conn, batch_id: int, attempts: int) -> None:
                 conn.execute("UPDATE batches SET status='failed' WHERE id=? AND status='running'", (batch_id,))
     except Exception as e:
         _log.warning("释放批 %s 失败: %s", batch_id, type(e).__name__)
+
+
+FAILED_KEEP = 30          # logs/failed 里最多留几份
+FAILED_MAX_CHARS = 50_000
+
+
+def _save_failed_output(batch_id: int, attempt: int, provider: str, reason: str, text: str) -> str:
+    """校验没过的模型原始输出存到 logs/failed/b<批>-a<次>.txt，只留最新 FAILED_KEEP 份。返回文件名，失败返回空串。
+    输入在发出前已脱敏，模型输出只会复述输入，所以落盘不再脱敏。"""
+    try:
+        d = paths.logs_dir() / "failed"
+        d.mkdir(parents=True, exist_ok=True)
+        p = d / f"b{batch_id}-a{attempt}.txt"
+        p.write_text(f"provider: {provider}\nreason: {reason}\n\n{(text or '')[:FAILED_MAX_CHARS]}", encoding="utf-8")
+        for old in sorted(d.glob("*.txt"), key=lambda x: (x.stat().st_mtime, x.name))[:-FAILED_KEEP]:
+            old.unlink(missing_ok=True)
+        return p.name
+    except OSError as e:
+        _log.warning("保存失败批的原始输出出错: %s", e)
+        return ""
 
 
 def _fail(conn, cfg, batch_id: int, attempts: int, event_ids: list[int], reason: str, provider: str | None,
@@ -170,14 +192,16 @@ def _one_batch(conn, sid: str, cfg, lease, stop_event, now: float) -> str:
     cur = conn.execute("SELECT id, ts, kind, tool, brief, body FROM events WHERE session_id=? "
                        "AND batch_id IS NULL AND coalesce(origin,'knotcord')='knotcord' ORDER BY id", (sid,))
     try:
-        events = _cut(cur, int(cfg.get("extract.max_chars")))
+        events = _cut(cur, int(cfg.get("extract.max_chars")), bool(cfg.get("extract.lean", True)))
     finally:
         cur.close()
     if not events:
         return "empty"
     text, ctx = prompt.build(conn, cfg, sid, project, events, now=now, max_chars=int(cfg.get("extract.max_chars")))
     batch_id, attempts = _claim(conn, sid, len(text), now)
-    tmp = paths.tmp_dir() / f"b{batch_id}-{os.getpid()}"
+    _log.info("批 %s 开始: session=%s events=%d chars=%d 第 %d 次", batch_id, sid[:8], len(events), len(text),
+              attempts + 1)
+    tmp =paths.tmp_dir() / f"b{batch_id}-{os.getpid()}"
 
     def on_tick() -> None:
         if stop_event is not None and stop_event.is_set():
@@ -195,7 +219,7 @@ def _one_batch(conn, sid: str, cfg, lease, stop_event, now: float) -> str:
             try:
                 result = mod.call(text, cfg, tmp_dir=str(tmp), on_tick=on_tick, stop_event=stop_event)
             except ChannelUnavailable as e:
-                until = budget.mark_unavailable(conn, provider, e.retry_at, _now())
+                until = budget.mark_unavailable(conn, provider, e.retry_at, _now(), reason=e.reason)
                 budget.breaker_note(False, _now())
                 _log.warning("%s 通道不可用，冷却到 %s: %s", provider, time.strftime("%m-%d %H:%M", time.localtime(until)),
                              e.reason[:200])
@@ -229,7 +253,9 @@ def _one_batch(conn, sid: str, cfg, lease, stop_event, now: float) -> str:
                                   n_events=len(ctx.event_ids), card_tokens=int(cfg.get("inject.card_tokens")))
         except validate.ValidationError as e:
             budget.breaker_note(False, _now())
-            _fail(conn, cfg, batch_id, attempts, ctx.event_ids, f"{result.provider}: 输出校验失败: {e}",
+            saved = _save_failed_output(batch_id, attempts + 1, result.provider, str(e), result.text)
+            _fail(conn, cfg, batch_id, attempts, ctx.event_ids,
+                  f"{result.provider}: 输出校验失败: {e}" + (f"（原始输出 {saved}）" if saved else ""),
                   result.provider, _now())
             return "failed"
         for w in v.warnings:
@@ -244,6 +270,7 @@ def _one_batch(conn, sid: str, cfg, lease, stop_event, now: float) -> str:
             raise
         except Exception as e:
             budget.breaker_note(False, _now())
+            _log.error("批 %s 落库失败", batch_id, exc_info=True)  # 带调用栈，方便排查
             _fail(conn, cfg, batch_id, attempts, ctx.event_ids, f"落库失败 {type(e).__name__}: {str(e)[:150]}",
                   result.provider, _now())
             return "failed"

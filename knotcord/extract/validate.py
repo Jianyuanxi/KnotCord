@@ -25,7 +25,7 @@ SUMMARY_MAX = 500
 CARD_STR_MAX, CARD_LIST_N, CARD_ITEM_MAX = 300, 8, 200
 WHY_MAX = 120
 UNFINISHED_MAX, UNFINISHED_N = 200, 5
-OBS_N = 20
+OBS_N = 8  # 指令要求每批不超过 5 条，这里是硬上限
 _KNOWN_KEYS = ("skip", "observations", "summary", "state_card", "memory_conflicts",
                "unfinished_new", "unfinished_resolved")
 

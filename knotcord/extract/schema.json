@@ -35,7 +35,7 @@
       }
     },
     "state_card": {
-      "type": "object",
+      "type": ["object", "null"],
       "additionalProperties": false,
       "required": ["goal", "status", "decisions", "pitfalls", "next"],
       "properties": {

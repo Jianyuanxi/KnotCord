@@ -52,9 +52,17 @@ def event_text(ev) -> str:
     return f"{who}: {body or brief}"
 
 
-def event_len(ev) -> int:
-    """切批时用的字数：正文 + 固定的序号/时间前缀。"""
-    return len(event_text(ev)) + 16
+def event_view(ev, lean_on: bool = True) -> str:
+    """喂给模型的那一版正文：开着去噪就走 lean.render，否则是原文。"""
+    if lean_on:
+        from . import lean
+        return lean.render(ev)
+    return event_text(ev)
+
+
+def event_len(ev, lean_on: bool = False) -> int:
+    """切批时用的字数：正文 + 固定的序号/时间前缀。lean_on 时按去噪后的字数算（一批能装更多）。"""
+    return len(event_view(ev, lean_on)) + 16
 
 
 # ---------------------------------------------------------------- 检索用的查询词
@@ -150,7 +158,8 @@ def build(conn, cfg, session_id: str, project: str, events: list, *, now: float,
     notes = _related_notes(conn, query, project)
     ctx.notes = [r["id"] for r in notes]
     unf = _unfinished_rows(conn, project)
-    ctx.unfinished = [{"id": r["id"], "text": (r["title"] or "") + (" " + r["body"] if r["body"] else "")}
+    # body 是全文、title 是它的前 60 字：有 body 只给 body，别重复两遍
+    ctx.unfinished = [{"id": r["id"], "text": r["body"] or r["title"] or ""}
                       for r in unf]
     ctx.memfiles = _related_memfiles(conn, query)
     ctx.card_json = _latest_card(conn, project)
@@ -188,9 +197,10 @@ def build(conn, cfg, session_id: str, project: str, events: list, *, now: float,
         lines = [f"- {m['label']}：{m['description'][:150]}" for m in ctx.memfiles]
         parts.append("# 相关的内置记忆文件（memory_conflicts 的 file 只能照抄这里的文件名）\n" + "\n".join(lines))
 
+    lean_on = bool(cfg.get("extract.lean", True))
     lines = []
     for i, ev in enumerate(events, 1):
-        line = f"[{i}] {_fmt(ev['ts'])} {event_text(ev)}"
+        line = f"[{i}] {_fmt(ev['ts'])} {event_view(ev, lean_on)}"
         if len(line) > max_chars:
             line = line[:max_chars] + "…(截断)"
         lines.append(line)

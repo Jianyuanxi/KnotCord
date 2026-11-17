@@ -11,16 +11,16 @@ from __future__ import annotations
 import json
 import time
 
+from knotcord import health
 from knotcord.core import db
+from knotcord.health import CODEX, DEEPSEEK, HARD_REASONS, day_key, is_hard_reason, unavailable_info  # noqa: F401
 
 from . import backlog
-
-CODEX = "codex"
-DEEPSEEK = "deepseek"
 
 # Codex 报错里解析不出恢复时间时，按 1、6、24 小时逐级加长（级数存 kv，成功一次清零）
 _LADDER_S = (3600, 6 * 3600, 24 * 3600)
 _DEEPSEEK_DEFAULT_COOLDOWN_S = 600  # DeepSeek 没给恢复时间时先歇 10 分钟，别每 30 秒敲一次
+_DEEPSEEK_HARD_COOLDOWN_S = 3600   # 余额不足、鉴权失败：要用户处理，1 小时试一次
 
 BREAKER_FAILS = 5
 BREAKER_PAUSE_S = 6 * 3600
@@ -33,23 +33,8 @@ def _now() -> float:  # 测试里可替换
 
 # ---------------------------------------------------------------- 当天用量
 
-def day_key(now: float) -> str:
-    return time.strftime("%Y-%m-%d", time.localtime(now))
-
-
 def usage_get(conn, now: float | None = None, day: str | None = None) -> dict:
-    now = _now() if now is None else now
-    key = "usage:" + (day or day_key(now))
-    raw = db.kv_get(conn, key)
-    base = {"calls": 0, "codex": 0, "deepseek": 0, "cny": 0.0, "tokens_in": 0, "tokens_out": 0}
-    if raw:
-        try:
-            d = json.loads(raw)
-            if isinstance(d, dict):
-                base.update({k: d[k] for k in base if k in d})
-        except ValueError:
-            pass
-    return base
+    return health.usage_get(conn, _now() if now is None else now, day)
 
 
 def record(conn, provider: str, *, tokens_in: int = 0, tokens_out: int = 0, cost_cny: float = 0.0,
@@ -88,15 +73,12 @@ def usage_line(conn, cfg, now: float | None = None) -> str:
 
 # ---------------------------------------------------------------- 通道冷却
 
-def _cd_key(provider: str) -> str:
-    return f"{provider}_cooldown_until"
+_cd_key = health.cd_key
+_unavail_key = health.unavail_key
 
 
 def cooldown_until(conn, provider: str) -> float:
-    try:
-        return float(db.kv_get(conn, _cd_key(provider), "0") or 0)
-    except ValueError:
-        return 0.0
+    return health.cooldown_until(conn, provider)
 
 
 def channel_available(conn, provider: str, now: float | None = None) -> bool:
@@ -104,11 +86,15 @@ def channel_available(conn, provider: str, now: float | None = None) -> bool:
     return cooldown_until(conn, provider) <= now
 
 
-def mark_unavailable(conn, provider: str, retry_at: float | None, now: float | None = None) -> float:
-    """设冷却，返回到期时间。retry_at 有效（在未来）就用它，否则 Codex 按 1/6/24 小时逐级加长。"""
+def mark_unavailable(conn, provider: str, retry_at: float | None, now: float | None = None,
+                     reason: str = "") -> float:
+    """设冷却，返回到期时间。retry_at 有效（在未来）就用它，否则 Codex 按 1/6/24 小时逐级加长；
+    DeepSeek 余额不足、鉴权失败这类要用户处理的歇 1 小时，其余歇 10 分钟。原因记进 kv 供开局告警和 doctor。"""
     now = _now() if now is None else now
     if retry_at and retry_at > now:
         until = float(retry_at)
+    elif provider == DEEPSEEK and is_hard_reason(reason):
+        until = now + _DEEPSEEK_HARD_COOLDOWN_S
     elif provider == CODEX:
         try:
             level = int(db.kv_get(conn, "codex_cooldown_level", "0") or 0)
@@ -119,13 +105,24 @@ def mark_unavailable(conn, provider: str, retry_at: float | None, now: float | N
     else:
         until = now + _DEEPSEEK_DEFAULT_COOLDOWN_S
     db.kv_set(conn, _cd_key(provider), int(until))
+    prev = unavailable_info(conn, provider)
+    since = prev["since"] if prev and prev.get("reason") == reason and prev.get("since") else int(now)
+    db.kv_set(conn, _unavail_key(provider), json.dumps({"reason": reason[:200], "since": since, "until": int(until)},
+                                                       ensure_ascii=False))
     return until
 
 
 def mark_ok(conn, provider: str) -> None:
-    """通道调用成功：Codex 的逐级加长清零。"""
+    """通道调用成功：Codex 的逐级加长清零，不可用原因清掉。"""
     if provider == CODEX and db.kv_get(conn, "codex_cooldown_level", "0") != "0":
         db.kv_set(conn, "codex_cooldown_level", 0)
+    if db.kv_get(conn, _unavail_key(provider), ""):
+        db.kv_set(conn, _unavail_key(provider), "")
+
+
+def health_lines(conn, cfg, now: float | None = None) -> list[str]:
+    """提炼告警，见 knotcord.health.lines。"""
+    return health.lines(conn, cfg, _now() if now is None else now)
 
 
 # ---------------------------------------------------------------- 熔断

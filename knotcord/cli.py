@@ -152,7 +152,15 @@ def cmd_doctor(args) -> int:
         for prov in ("codex", "deepseek"):
             until = budget.cooldown_until(conn, prov)
             if until > now:
-                _out(f"  {prov} 冷却到 {_fmt_ts(until)}")
+                info_u = budget.unavailable_info(conn, prov) or {}
+                why = f"（{info_u['reason']}，{_fmt_ts(info_u.get('since'))} 起）" if info_u.get("reason") else ""
+                _out(f"  {prov} 冷却到 {_fmt_ts(until)}{why}")
+        warn.extend(budget.health_lines(conn, cfg, now))
+        fdir = home / "logs" / "failed"
+        if fdir.is_dir():
+            kept = sorted(fdir.glob("*.txt"))
+            if kept:
+                _out(f"  失败批的模型原始输出: {len(kept)} 份，在 {fdir}（最新 {kept[-1].name}）")
         fails = conn.execute(
             "SELECT id, session_id, provider, status, error, created FROM batches "
             "WHERE status IN ('failed','dead') ORDER BY id DESC LIMIT 5").fetchall()

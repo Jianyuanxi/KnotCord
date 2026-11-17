@@ -107,7 +107,8 @@ def _unfinished_block(conn, project: str, cfg, now: float) -> str:
         "SELECT id, ts, title, body FROM notes WHERE project=? AND type='unfinished' AND state='active' "
         "AND coalesce(last_mentioned, ts) >= ? ORDER BY coalesce(last_mentioned, ts) DESC, id DESC LIMIT ?",
         (project, cutoff, int(cfg.get("inject.unfinished_max", 8)))).fetchall()
-    lines = [f"u{r['id']} {_md(r['ts'])} {_one(r['title'] or r['body'])[:120]}" for r in rows]
+    # title 只是全文前 60 字，长条目会被截在半句：有 body（全文）用 body
+    lines = [f"u{r['id']} {_md(r['ts'])} {_one(r['body'] or r['title'])[:120]}" for r in rows]
     return ("## 没做完\n" + "\n".join(lines) + "\n") if lines else ""
 
 
@@ -245,7 +246,14 @@ def _corrupt_line(conn) -> str:
     except sqlite3.Error:
         return ""
     msg = msg.split("（quick_check")[0].strip()
-    return f"! {_one(msg)}\n" if msg else ""
+    lines = [f"! {_one(msg)}\n"] if msg else []
+    try:  # 提炼告警（余额不足、到上限、批次作废）：和库损坏一样放最前面，不占预算
+        from knotcord import health  # 不能经 knotcord.extract：hook 进程要轻
+        # 偶尔坏 1 批不用用户动手（事件已走零模型兜底），开局只在 24 小时内坏 2 批以上才提；doctor 照常全报
+        lines += [f"! {_one(h)}\n" for h in health.lines(conn, _config.load(), min_dead=2)]
+    except Exception:
+        pass
+    return "".join(lines)
 
 
 def _promote_block(conn, project: str) -> str:

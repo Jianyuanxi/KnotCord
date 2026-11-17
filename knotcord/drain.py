@@ -100,6 +100,7 @@ def main() -> int:
     hard = threading.Timer(max_s + HARD_EXIT_EXTRA_S, os._exit, (0,))
     hard.daemon = True
     hard.start()
+    _log.info("drain 开始")  # 进程被外力杀掉时，至少留下"开始了没结束"的痕迹
     try:
         result = run(cfg, max_s=max_s)
         _log.info("drain 结束: %s", result)
