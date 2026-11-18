@@ -248,9 +248,11 @@ def _one_batch(conn, sid: str, cfg, lease, stop_event, now: float) -> str:
 
         # 先分类失败（上面已处理）再校验
         try:
-            obj = validate.parse_model_text(result.text)
+            fixes: list[str] = []
+            obj = validate.parse_model_text(result.text, fixes)
             v = validate.validate(obj, n_notes=len(ctx.notes), n_unfinished=len(ctx.unfinished),
                                   n_events=len(ctx.event_ids), card_tokens=int(cfg.get("inject.card_tokens")))
+            v.warnings[:0] = [f"模型 JSON 有误已自动修复：{x}" for x in fixes]
         except validate.ValidationError as e:
             budget.breaker_note(False, _now())
             saved = _save_failed_output(batch_id, attempts + 1, result.provider, str(e), result.text)

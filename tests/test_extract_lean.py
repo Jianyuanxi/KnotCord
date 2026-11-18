@@ -158,3 +158,36 @@ def test_state_card_null_means_unchanged():
     many = [{"type": "change", "title": f"t{i}"} for i in range(20)]
     v = validate.validate({"observations": many}, n_notes=0, n_unfinished=0, n_events=1)
     assert len(v.notes) == validate.OBS_N
+
+
+# ------------------------------------------------------------------ 坏 JSON 自动修复（11-17 DeepSeek 实测的几类）
+
+def _parse(text):
+    from knotcord.extract import validate
+    fixes = []
+    return validate.parse_model_text(text, fixes), fixes
+
+
+def test_repair_truncated_after_observations():
+    obj, fixes = _parse('{"skip": false, "observations": [{"type": "change", "title": "t", "source": [1, 2]}]')
+    assert obj["observations"][0]["title"] == "t" and fixes == ["补齐中途截断的结尾"]
+    obj, _ = _parse('{"skip": false, "observations": [{"type": "change", "title": "半句')
+    assert obj["observations"][0]["title"] == "半句"
+
+
+def test_repair_bad_escape_keeps_valid_ones():
+    obj, fixes = _parse(r'{"skip": false, "observations": [], "summary": {"learned": "写 \small 和 \\x 路径 E:\\a\b"}}')
+    assert obj["summary"]["learned"] == "写 \\small 和 \\x 路径 E:\\a\b"
+    assert fixes == ["补全非法反斜杠转义"]
+
+
+def test_repair_chinese_separator_and_dsml():
+    obj, fixes = _parse('{"skip":false,"observations":[]。"unfinished_new":["a"]}')
+    assert obj["unfinished_new"] == ["a"] and fixes == ["字段间中文标点改成逗号"]
+    obj, fixes = _parse('{"skip":false,"observations":[{"title":"t"}]</｜｜DSML｜｜ parameter>\n<｜｜DSML｜｜ parameter name="x">[1]')
+    assert obj["observations"] == [{"title": "t"}] and "截掉混入的工具调用标记" in fixes
+
+
+def test_valid_json_reports_no_fixes():
+    obj, fixes = _parse('{"skip": true, "observations": []}')
+    assert obj["skip"] is True and fixes == []

@@ -48,8 +48,60 @@ class Validated:
 
 # ---------------------------------------------------------------- 从文本里取 JSON
 
-def parse_model_text(text: str):
-    """先整段 json.loads；不行就去掉 ``` 围栏，再从每个 { 开始试 raw_decode，取第一个解出对象的。"""
+# 11-17 实测 DeepSeek 偶发的几类坏 JSON（logs/failed/b126..b134）：
+_DSML_RE = re.compile(r"</?｜[^>]*>")                                   # 混进内部工具调用标记：从第一个标记处截断
+# 正文里的 LaTeX \small、Windows 路径：成对吃掉合法转义（\\、\"、\n…），只把落单的 \ 补成 \\
+_ESC_RE = re.compile(r'\\(["\\/bfnrt]|u[0-9a-fA-F]{4})?')
+_CN_SEP_RE = re.compile(r'([\]}"])\s*[。，、；]\s*(")')                  # 字段之间用了中文标点
+
+
+def _close_open(s: str) -> str:
+    """输出半途停止时补齐：未闭合的字符串、末尾悬空的逗号/冒号、未闭合的 [ {。"""
+    stack: list[str] = []
+    in_str = esc = False
+    for ch in s:
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+        elif ch == '"':
+            in_str = True
+        elif ch in "[{":
+            stack.append("]" if ch == "[" else "}")
+        elif ch in "]}" and stack:
+            stack.pop()
+    if in_str:
+        s += '"'
+    s = re.sub(r"[,:]\s*$", "", s.rstrip())
+    return s + "".join(reversed(stack))
+
+
+def _repair(s: str) -> tuple[str, list[str]]:
+    fixes: list[str] = []
+    m = _DSML_RE.search(s)
+    if m:
+        s, _ = s[:m.start()], fixes.append("截掉混入的工具调用标记")
+    t = _ESC_RE.sub(lambda mm: mm.group(0) if mm.group(1) else "\\\\", s)
+    if t != s:
+        s, _ = t, fixes.append("补全非法反斜杠转义")
+    t = _CN_SEP_RE.sub(r"\1,\2", s)
+    if t != s:
+        s, _ = t, fixes.append("字段间中文标点改成逗号")
+    try:
+        json.loads(s)
+    except ValueError:
+        t = _close_open(s)
+        if t != s:
+            s, _ = t, fixes.append("补齐中途截断的结尾")
+    return s, fixes
+
+
+def parse_model_text(text: str, fixes: list[str] | None = None):
+    """先整段 json.loads；不行就去掉 ``` 围栏；再按已知的几类错误修一遍（修了什么记进 fixes）；
+    最后才从每个 { 开始试 raw_decode，取第一个解出对象的。"""
     if not text or not text.strip():
         raise ValidationError("模型输出为空")
     s = text.strip()
@@ -62,6 +114,16 @@ def parse_model_text(text: str):
         return json.loads(s)
     except ValueError:
         pass
+    if s.startswith("{"):
+        fixed, done = _repair(s)
+        try:
+            obj = json.loads(fixed)
+            if isinstance(obj, dict):
+                if fixes is not None:
+                    fixes.extend(done)
+                return obj
+        except ValueError:
+            pass
     dec = json.JSONDecoder()
     i = s.find("{")
     while i >= 0:
