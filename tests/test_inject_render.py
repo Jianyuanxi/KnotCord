@@ -194,16 +194,44 @@ def test_flag_for_deleted_file_dropped_and_unresolvable_kept(conn, tmp_path):
     assert [r[0] for r in conn.execute("SELECT file FROM mem_flags ORDER BY file")] == ["other.md", "unknown.md"]
 
 
-def test_sessions_block_latest_summary_per_session_max_5(conn):
+def test_sessions_block_latest_summary_per_session_max_3_within_7_days(conn):
     now = int(time.time())
     _summary(conn, "a", "旧请求", "旧完成", ts=now - 500)
     _summary(conn, "a", "新请求", "新完成", ts=now - 5)
     for i in range(6):
         _summary(conn, f"b{i}", f"请求{i}", "", ts=now - 10 * (i + 1))
+    _summary(conn, "old", "八天前的会话", "", ts=now - 8 * DAY)
     text = inject.render(conn, P)
     assert "旧请求" not in text and "新请求 → 新完成" in text
     sec = text.split("## 最近会话\n", 1)[1]
-    assert len([ln for ln in sec.splitlines() if ln.startswith("S")]) == 5
+    assert len([ln for ln in sec.splitlines() if ln.startswith("S")]) == 3
+    assert "八天前的会话" not in text
+
+
+def test_points_and_unfinished_skip_what_card_already_says(conn):
+    _card(conn, {"goal": "备赛", "status": "PR 61 的五条图片修改已经全绿还没审核",
+                 "next": ["逐条核对参考文献是否属实"]})
+    _note(conn, "unfinished", "PR 61 的五条图片修改已经全绿还没审核")
+    _note(conn, "unfinished", "符号表还缺几个变量")
+    _note(conn, "decision", "逐条核对参考文献是否属实")
+    _note(conn, "decision", "灵敏度分析单独成节")
+    text = inject.render(conn, P)
+    unf = text.split("## 没做完\n", 1)[1].split("##", 1)[0]
+    pts = text.split("## 要点\n", 1)[1]
+    assert "符号表还缺几个变量" in unf and "五条图片" not in unf
+    assert "灵敏度分析单独成节" in pts and "参考文献" not in pts
+
+
+def test_tail_ignores_migrated_claude_mem_events(conn):
+    _session(conn, "s9")
+    conn.execute("INSERT INTO events(session_id, project, ts, uuid, kind, body, origin) VALUES(?,?,?,?,?,?,?)",
+                 ("s9", P, int(time.time()), "legacy-1", "prompt", "迁移来的旧提问", "claude-mem"))
+    conn.commit()
+    _note(conn, "decision", "随便一条")
+    inject.render(conn, P)
+    assert "未提炼" not in inject.read_for_hook(conn, P)
+    _event(conn, "s9", "prompt", "新的没提炼的提问")
+    assert "新的没提炼的提问" in inject.read_for_hook(conn, P)
 
 
 def test_tag_in_content_cannot_close_wrapper(conn):

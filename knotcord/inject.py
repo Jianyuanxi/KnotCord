@@ -26,6 +26,8 @@ _KEY_POINTS_MAX = 8
 _REQUEST_MAX = 50
 _DONE_MAX = 60
 _KEY_DAYS = 7
+_SESSIONS_DAYS, _SESSIONS_MAX = 7, 3  # 更早的会话靠现状卡和 search 找，不占开局
+_DUP_RATIO = 0.6  # 一行的汉字二元组有这么多已出现在前面的块里，就算重复，不再列
 _TAIL_CHARS = 80
 PROMOTE_PREFIX = "promote:"  # kv 键 promote:<项目>，由 consolidate.nominate 写
 _PROMOTE_SHOW = 3
@@ -44,6 +46,20 @@ def _md(ts) -> str:
         return time.strftime("%m-%d", time.localtime(int(ts)))
     except (TypeError, ValueError, OSError, OverflowError):
         return "??-??"
+
+
+_GRAM_DROP = re.compile(r"[\s\W_]+")
+
+
+def _grams(text: str) -> set[str]:
+    s = _GRAM_DROP.sub("", str(text or "").lower())
+    return {s[i:i + 2] for i in range(len(s) - 1)}
+
+
+def _is_dup(text: str, seen: set[str]) -> bool:
+    """text 的二元组大部分已在 seen（前面块的全部二元组）里：同一件事前面已经说过。"""
+    g = _grams(text)
+    return len(g) >= 4 and len(g & seen) / len(g) >= _DUP_RATIO
 
 
 def _first_sentence(text: str, limit: int) -> str:
@@ -101,14 +117,19 @@ def _card_block(conn, project: str, cfg) -> str:
     return ""
 
 
-def _unfinished_block(conn, project: str, cfg, now: float) -> str:
+def _unfinished_block(conn, project: str, cfg, now: float, seen: set[str] | None = None) -> str:
+    """seen：现状卡的二元组；和现状卡说的是同一件事的条目不再列（去掉的不拿更旧的补位，省下的就是省下的）。"""
     cutoff = now - int(cfg.get("inject.unfinished_days", 14)) * 86400
     rows = conn.execute(
         "SELECT id, ts, title, body FROM notes WHERE project=? AND type='unfinished' AND state='active' "
         "AND coalesce(last_mentioned, ts) >= ? ORDER BY coalesce(last_mentioned, ts) DESC, id DESC LIMIT ?",
         (project, cutoff, int(cfg.get("inject.unfinished_max", 8)))).fetchall()
-    # title 只是全文前 60 字，长条目会被截在半句：有 body（全文）用 body
-    lines = [f"u{r['id']} {_md(r['ts'])} {_one(r['body'] or r['title'])[:120]}" for r in rows]
+    lines = []
+    for r in rows:
+        # title 只是全文前 60 字，长条目会被截在半句：有 body（全文）用 body
+        text = _one(r['body'] or r['title'])[:120]
+        if not (seen and _is_dup(text, seen)):
+            lines.append(f"u{r['id']} {_md(r['ts'])} {text}")
     return ("## 没做完\n" + "\n".join(lines) + "\n") if lines else ""
 
 
@@ -148,11 +169,12 @@ def _flags_block(conn, project: str) -> str:
     return ("## 记忆文件可能过时\n" + "\n".join(shown) + "\n") if shown else ""
 
 
-def _sessions_block(conn, project: str) -> str:
+def _sessions_block(conn, project: str, now: float) -> str:
     rows = conn.execute(
-        "SELECT id, ts, request, completed FROM summaries WHERE project=? AND id IN "
+        "SELECT id, ts, request, completed FROM summaries WHERE project=? AND ts>=? AND id IN "
         "(SELECT max(id) FROM summaries WHERE project=? GROUP BY session_id) "
-        "ORDER BY ts DESC, id DESC LIMIT 5", (project, project)).fetchall()
+        "ORDER BY ts DESC, id DESC LIMIT ?",
+        (project, now - _SESSIONS_DAYS * 86400, project, _SESSIONS_MAX)).fetchall()
     lines = []
     for r in rows:
         req = _first_sentence(r["request"], _REQUEST_MAX)
@@ -163,12 +185,14 @@ def _sessions_block(conn, project: str) -> str:
     return ("## 最近会话\n" + "\n".join(lines) + "\n") if lines else ""
 
 
-def _points_block(conn, project: str, now: float) -> str:
+def _points_block(conn, project: str, now: float, seen: set[str] | None = None) -> str:
+    """seen：现状卡 + 没做完的二元组；前面已经说过的同一件事不再列。"""
     rows = conn.execute(
         "SELECT id, ts, type, title FROM notes WHERE project=? AND state='active' AND ts>=? "
         "AND type!='unfinished' AND (type IN ('decision','bugfix') OR tags LIKE '%gotcha%') "
         "ORDER BY ts DESC, id DESC LIMIT ?", (project, now - _KEY_DAYS * 86400, _KEY_POINTS_MAX)).fetchall()
-    lines = [f"n{r['id']} {_md(r['ts'])} {_one(r['type'])} {_one(r['title'])[:120]}" for r in rows]
+    lines = [f"n{r['id']} {_md(r['ts'])} {_one(r['type'])} {_one(r['title'])[:120]}"
+             for r in rows if not (seen and _is_dup(r["title"], seen))]
     return ("## 要点\n" + "\n".join(lines) + "\n") if lines else ""
 
 
@@ -183,12 +207,15 @@ def render(conn, project: str) -> str:
     """按方案书第 4 节顺序重拼注入文本（第 7 项除外），写入 kv 的 inject:<project>，返回文本。"""
     cfg = _config.load()
     now = time.time()
+    card = _card_block(conn, project, cfg)
+    seen = _grams(card)
+    unf = _unfinished_block(conn, project, cfg, now, seen)
     blocks = [
-        _card_block(conn, project, cfg),
-        _unfinished_block(conn, project, cfg, now),
+        card,
+        unf,
         _flags_block(conn, project),
-        _sessions_block(conn, project),
-        _points_block(conn, project, now),
+        _sessions_block(conn, project, now),
+        _points_block(conn, project, now, seen | _grams(unf)),
     ]
     head = _head(project, now)
     accepted: list[str] = []
@@ -217,7 +244,9 @@ def _tail_block(conn, project: str, exclude_session: str | None, cfg, now: float
         return ""
     sid = sess[0]
     cnt, first_id = conn.execute(
-        "SELECT count(*), min(id) FROM events WHERE session_id=? AND batch_id IS NULL AND kind='prompt'",
+        # 从 claude-mem 迁来的事件（origin='claude-mem'）按设计不提炼，batch_id 永远为空，不算"未提炼"
+        "SELECT count(*), min(id) FROM events WHERE session_id=? AND batch_id IS NULL AND kind='prompt' "
+        "AND origin='knotcord'",
         (sid,)).fetchone()
     if not cnt:
         return ""
@@ -225,7 +254,7 @@ def _tail_block(conn, project: str, exclude_session: str | None, cfg, now: float
     files = []
     for (brief,) in conn.execute(
             "SELECT brief FROM events WHERE session_id=? AND batch_id IS NULL AND kind='tool' "
-            "AND tool IN ('Edit','Write') ORDER BY id DESC LIMIT 12", (sid,)):
+            "AND tool IN ('Edit','Write') AND origin='knotcord' ORDER BY id DESC LIMIT 12", (sid,)):
         name = os.path.basename((brief or "").replace("\\", "/"))
         if name and name not in files:
             files.append(name)
